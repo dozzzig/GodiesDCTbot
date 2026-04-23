@@ -1,0 +1,30 @@
+module.exports = {
+  apps: [
+    {
+      name: 'dkt-parser',
+      script: 'src/scheduler.js',
+      cwd: __dirname,
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '200M',
+      env_file: '.env',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      error_file: 'logs/parser-error.log',
+      out_file: 'logs/parser-out.log',
+    },
+    {
+      name: 'dkt-bot',
+      script: 'src/bot.js',
+      cwd: __dirname,
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '200M',
+      env_file: '.env',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      error_file: 'logs/bot-error.log',
+      out_file: 'logs/bot-out.log',
+    },
+  ],
+};

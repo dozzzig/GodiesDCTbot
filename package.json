@@ -1,0 +1,22 @@
+{
+  "name": "godiesdctbot",
+  "version": "1.0.0",
+  "description": "NFT sticker tracker for DKT community on TON blockchain",
+  "main": "src/scheduler.js",
+  "scripts": {
+    "start": "node src/scheduler.js",
+    "bot": "node src/bot.js",
+    "parse": "node src/parser.js",
+    "dev": "node src/scheduler.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@ton/core": "^0.63.1",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0",
+    "pg": "^8.11.5"
+  }
+}
