@@ -195,7 +195,7 @@ async function getCollectionsText() {
   );
 
   if (res.rows.length === 0) {
-    return '_(нет данных)_';
+    return ['_(нет данных)_'];
   }
 
   const collections = new Map();
@@ -213,19 +213,24 @@ async function getCollectionsText() {
     }))
     .sort((a, b) => b.total - a.total);
 
-  let text = '📊 *Разбивка по коллекциям:*\n\n';
+  const messages = [];
+  let currentText = '📊 *Разбивка по коллекциям:*\n\n';
   let i = 1;
+
   for (const col of sorted) {
-    if (text.length > 3500) {
-      text += '\n...и другие коллекции.';
-      break;
+    const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}(${w.cnt})`).join(', ');
+    const line = `${i}. *${esc(col.name)}* (${col.total}) — ${walletInfo}\n`;
+
+    if (currentText.length + line.length > 3900) {
+      messages.push(currentText.trim());
+      currentText = ''; 
     }
-    text += `*${i}. ${esc(col.name)}* — ${col.total} шт.\n`;
-    const walletLine = col.wallets.map((w) => `${esc(w.wallet)} (${w.cnt})`).join(', ');
-    text += `   Кошельки: _${walletLine}_\n\n`;
+    currentText += line;
     i++;
   }
-  return text.trim();
+  
+  if (currentText) messages.push(currentText.trim());
+  return messages;
 }
 
 async function getWalletsListText() {
@@ -371,7 +376,15 @@ bot.on('callback_query', async (query) => {
     } else if (data === 'cmd_stats') {
       textOut = await getStatsText();
     } else if (data === 'cmd_collections') {
-      textOut = await getCollectionsText();
+      const texts = await getCollectionsText();
+      // First part: Edit current message
+      textOut = texts[0];
+      // Remaining parts: Send as new messages
+      if (texts.length > 1) {
+        for (let j = 1; j < texts.length; j++) {
+          await bot.sendMessage(msg.chat.id, texts[j], { parse_mode: 'Markdown' });
+        }
+      }
     } else if (data === 'cmd_moves') {
       textOut = await getMovesText();
     } else if (data === 'cmd_wallets_list') {
