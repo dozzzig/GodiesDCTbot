@@ -3,45 +3,17 @@
 const { Address } = require('@ton/core');
 
 /**
- * Normalizes any TON address format to a lowercase Raw Hex string (0:...).
- * This is our "Single Source of Truth" for database storage.
- * 
- * @param {string} input - Any TON address format (Base64, Hex, etc.)
- * @returns {string} Lowercase Raw Hex string.
+ * PASS-THROUGH: No normalization as requested by user.
  */
 function normalizeAddress(input) {
-  if (!input) return null;
-  try {
-    const addr = Address.parse(input);
-    return addr.toRawString().toLowerCase();
-  } catch (err) {
-    // console.error(`[AddressUtils] Failed to normalize: ${input}`, err.message);
-    return input.toLowerCase(); 
-  }
+  return input ? input.trim() : null;
 }
 
 /**
- * Converts any TON address to a User-friendly Base64 (Non-bounceable) string.
- * Required by TonAPI to avoid HTTP 400 errors.
- * 
- * @param {string} input - Raw Hex or any TON address.
- * @returns {string} User-friendly Base64 address.
+ * PASS-THROUGH: No conversion as requested by user.
  */
 function toUserFriendly(input) {
-  if (!input) return null;
-  // If it's already a friendly format, return it
-  if (input.startsWith('U') || input.startsWith('E')) return input;
-  
-  try {
-    const addr = Address.parse(input);
-    return addr.toString({
-      bounceable: false,
-      testOnly: false,
-      urlSafe: true
-    });
-  } catch (err) {
-    return input; 
-  }
+  return input ? input.trim() : null;
 }
 
 /**
@@ -49,9 +21,8 @@ function toUserFriendly(input) {
  */
 function shortAddr(addr) {
   if (!addr) return '—';
-  const friendly = toUserFriendly(addr);
-  if (friendly.length < 12) return friendly;
-  return `${friendly.slice(0, 6)}...${friendly.slice(-4)}`;
+  if (addr.length < 12) return addr;
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 module.exports = {
