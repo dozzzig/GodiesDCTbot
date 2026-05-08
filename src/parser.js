@@ -14,24 +14,26 @@ const axios = require('axios');
 // Tracks the last sync timestamp for /status command
 let lastSyncAt = null;
 let lastSyncErrors = [];
-let isParserRunning = false; // Mutex to prevent overlapping cycles
+
+// GLOBAL MUTEX: This is critical. It must be outside the function.
+let isParserRunning = false; 
 
 /**
  * Main entry point. Processes all wallets sequentially to respect rate limits.
  */
 async function runParser() {
   if (isParserRunning) {
-    console.log('[Parser] Skipped cycle — another one is still running.');
+    console.log('[Parser] Cycle already in progress. Skipping...');
     return;
   }
-  isParserRunning = true;
-  
-  try {
-    console.log('[Parser] Starting sync cycle...');
-    lastSyncErrors = [];
 
-  const wallets = await getTrackedWallets();
-  const lookups = buildWalletLookups(wallets);
+  isParserRunning = true;
+  console.log('[Parser] Starting sync cycle...');
+  lastSyncErrors = [];
+
+  try {
+    const wallets = await getTrackedWallets();
+    const lookups = buildWalletLookups(wallets);
 
   // STRICT SEQUENTIAL LOOP: for...of ensures each wallet finishes before the next starts
   for (const wallet of wallets) {
@@ -46,9 +48,7 @@ async function runParser() {
 
   lastSyncAt = new Date();
   console.log(`[Parser] Sync complete at ${lastSyncAt.toISOString()}. Errors: ${lastSyncErrors.length}`);
-  } finally {
-    isParserRunning = false;
-  }
+  isParserRunning = false;
 }
 
 /**

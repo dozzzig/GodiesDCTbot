@@ -60,5 +60,6 @@ module.exports = {
   isValidTonFormat,
   getTrackedWallets,
   buildWalletLookups,
-  PARSE_INTERVAL_MIN: parseInt(process.env.PARSE_INTERVAL_MIN, 10) || 60
+  PARSE_INTERVAL_MIN: parseInt(process.env.PARSE_INTERVAL_MIN, 10) || 120,
+  TONAPI_KEY: process.env.TONAPI_KEY
 };
