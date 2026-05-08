@@ -11,7 +11,7 @@ const { toUserFriendly } = require('./utils/address');
 
 // Rate limit delay. With a TONAPI_KEY, we could go faster,
 // but 1000ms ensures perfect stability on any tier.
-const TONAPI_REQUEST_DELAY_MS = 1000;
+const TONAPI_REQUEST_DELAY_MS = 1500;
 
 const BASE_URL = 'https://tonapi.io/v2';
 const MAX_RETRIES = 2;
