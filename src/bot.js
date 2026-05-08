@@ -305,9 +305,13 @@ bot.on('message', async (msg) => {
         throw new Error('Указан заведомо неверный формат строки адреса.');
       }
 
-      // 2. Normalize and check for existing
+      // 2. Normalize and check for existing (check both raw and normalized)
       const normalized = normalizeAddress(text);
-      const checkRes = await query('SELECT name FROM tracked_wallets WHERE address = $1', [normalized]);
+      const checkRes = await query(
+        'SELECT name FROM tracked_wallets WHERE address = $1 OR address = $2',
+        [text, normalized]
+      );
+      
       if (checkRes.rows.length > 0) {
         throw new Error(`Этот кошелек уже отслеживается под именем "${checkRes.rows[0].name}".`);
       }
