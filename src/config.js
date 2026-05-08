@@ -4,7 +4,7 @@
 // Settings & Configuration
 // =============================================================
 
-const { Address } = require('@ton/core');
+const { normalizeAddress } = require('./utils/address');
 const { query } = require('./db');
 
 /**
@@ -17,17 +17,6 @@ function isValidTonFormat(str) {
 }
 
 /**
- * Normalizes any TON address into raw 0:hex
- */
-function toAddress(addressStr) {
-  try {
-    return Address.parse(addressStr).toRawString();
-  } catch (err) {
-    throw new Error(`Invalid TON address format: ${addressStr}`);
-  }
-}
-
-/**
  * Fetches all tracked wallets directly from the database.
  */
 async function getTrackedWallets() {
@@ -35,7 +24,7 @@ async function getTrackedWallets() {
   return res.rows.map(row => ({
     id: row.id,
     name: row.name,
-    address: row.address, // Friendly UQD string
+    address: row.address, // Raw Hex string (normalized)
     index: row.wallet_index
   }));
 }
@@ -48,27 +37,26 @@ function buildWalletLookups(wallets) {
   const addressMap = new Set();
   
   for (const w of wallets) {
-    try {
-      const rawHex = toAddress(w.address);
+    const rawHex = normalizeAddress(w.address);
+    if (rawHex) {
       addressMap.add(rawHex);
       nameMap.set(rawHex, w);
-    } catch(e) {
-      console.warn(`[Config] Skipped invalid wallet ${w.name}`);
     }
   }
 
   return {
     isDktAddress: (addr) => {
-      try { return addressMap.has(toAddress(addr)); } catch { return false; }
+      const normalized = normalizeAddress(addr);
+      return normalized ? addressMap.has(normalized) : false;
     },
     getDktWallet: (addr) => {
-      try { return nameMap.get(toAddress(addr)) || null; } catch { return null; }
+      const normalized = normalizeAddress(addr);
+      return normalized ? nameMap.get(normalized) || null : null;
     },
   };
 }
 
 module.exports = {
-  toAddress,
   isValidTonFormat,
   getTrackedWallets,
   buildWalletLookups

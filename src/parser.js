@@ -8,6 +8,7 @@ require('dotenv').config();
 const { getTrackedWallets, buildWalletLookups } = require('./config');
 const { query } = require('./db');
 const { getNFTsByWallet, getAccountEvents, getNFTItem } = require('./tonapi');
+const { normalizeAddress, toUserFriendly, shortAddr } = require('./utils/address');
 const axios = require('axios');
 
 // Tracks the last sync timestamp for /status command
@@ -24,6 +25,7 @@ async function runParser() {
   const wallets = await getTrackedWallets();
   const lookups = buildWalletLookups(wallets);
 
+  // STRICT SEQUENTIAL LOOP: for...of ensures each wallet finishes before the next starts
   for (const wallet of wallets) {
     try {
       await processWallet(wallet, lookups);
@@ -39,45 +41,38 @@ async function runParser() {
 }
 
 /**
- * Processes a single wallet:
- * 1. Fetches current NFTs from TonAPI → upserts into current_inventory
- * 2. Fetches new events from TonAPI → classifies and records transfers
+ * Processes a single wallet.
  */
 async function processWallet(wallet, lookups) {
-  console.log(`[Parser] Processing ${wallet.name} (${wallet.address})`);
+  const normalizedWalletAddr = normalizeAddress(wallet.address);
+  console.log(`[Parser] Processing ${wallet.name} (${toUserFriendly(normalizedWalletAddr)})`);
 
-  await syncInventory(wallet);
-  await syncTransfers(wallet, lookups);
+  await syncInventory(wallet, normalizedWalletAddr);
+  await syncTransfers(wallet, normalizedWalletAddr, lookups);
 }
-
-// =============================================================
-// Inventory sync
-// =============================================================
 
 /**
  * Fetches NFTs for the wallet and upserts them into current_inventory.
- * Removes rows for NFTs that are no longer owned by this wallet.
  */
-async function syncInventory(wallet) {
-  const nftItems = await getNFTsByWallet(wallet.address);
+async function syncInventory(wallet, walletAddress) {
+  const nftItems = await getNFTsByWallet(walletAddress);
 
   if (nftItems.length === 0) {
-    // Clear inventory for this wallet (all NFTs left or none exist)
     await query(
       'DELETE FROM current_inventory WHERE wallet_address = $1',
-      [wallet.address]
+      [walletAddress]
     );
     return;
   }
 
   const now = new Date().toISOString();
-  const currentAddresses = nftItems.map((item) => item.address);
+  const currentNftAddresses = nftItems.map((item) => normalizeAddress(item.address));
 
-  // Upsert each NFT
   for (const item of nftItems) {
+    const nftAddress = normalizeAddress(item.address);
     const stickerName = item.metadata?.name ?? null;
     const collectionName = item.collection?.name ?? null;
-    const collectionAddress = item.collection?.address ?? null;
+    const collectionAddress = normalizeAddress(item.collection?.address) ?? null;
 
     await query(
       `INSERT INTO current_inventory
@@ -89,39 +84,32 @@ async function syncInventory(wallet) {
          collection_name    = EXCLUDED.collection_name,
          collection_address = EXCLUDED.collection_address,
          updated_at         = EXCLUDED.updated_at`,
-      [wallet.address, wallet.name, item.address, stickerName, collectionName, collectionAddress, now]
+      [walletAddress, wallet.name, nftAddress, stickerName, collectionName, collectionAddress, now]
     );
   }
 
-  // Remove NFTs no longer in this wallet
-  if (currentAddresses.length > 0) {
-    const placeholders = currentAddresses.map((_, i) => `$${i + 2}`).join(', ');
+  if (currentNftAddresses.length > 0) {
+    const placeholders = currentNftAddresses.map((_, i) => `$${i + 2}`).join(', ');
     await query(
       `DELETE FROM current_inventory
         WHERE wallet_address = $1
           AND nft_address NOT IN (${placeholders})`,
-      [wallet.address, ...currentAddresses]
+      [walletAddress, ...currentNftAddresses]
     );
   }
 }
 
-// =============================================================
-// Transfer detection
-// =============================================================
-
 /**
- * Fetches account events since the last processed lt,
- * extracts NftItemTransfer actions, classifies each, and inserts into transfers_history.
+ * Fetches account events and records transfers.
  */
-async function syncTransfers(wallet, lookups) {
-  // Load last processed logical time for this wallet
+async function syncTransfers(wallet, walletAddress, lookups) {
   const stateResult = await query(
     'SELECT last_event_lt FROM parser_state WHERE wallet_address = $1',
-    [wallet.address]
+    [walletAddress]
   );
   const lastLt = stateResult.rows[0]?.last_event_lt ?? 0;
 
-  const events = await getAccountEvents(wallet.address, Number(lastLt));
+  const events = await getAccountEvents(walletAddress, Number(lastLt));
   if (events.length === 0) return;
 
   let maxLt = Number(lastLt);
@@ -138,27 +126,24 @@ async function syncTransfers(wallet, lookups) {
       const transfer = action.NftItemTransfer;
       if (!transfer) continue;
 
-      const fromAddress = transfer.sender?.address ?? null;
-      const toAddress   = transfer.recipient?.address ?? null;
-      const nftAddress  = transfer.nft;
+      const fromAddress = normalizeAddress(transfer.sender?.address);
+      const toAddress   = normalizeAddress(transfer.recipient?.address);
+      const nftAddress  = normalizeAddress(transfer.nft);
 
       if (!nftAddress) continue;
 
-      // Resolve DKT wallet names from addresses (null = external party)
-      const fromWallet = fromAddress ? lookups.getDktWallet(fromAddress) : null;
-      const toWallet   = toAddress   ? lookups.getDktWallet(toAddress)   : null;
+      const fromWallet = lookups.getDktWallet(fromAddress);
+      const toWallet   = lookups.getDktWallet(toAddress);
 
-      const fromInDkt = fromAddress ? lookups.isDktAddress(fromAddress) : false;
-      const toInDkt   = toAddress   ? lookups.isDktAddress(toAddress)   : false;
+      const fromInDkt = lookups.isDktAddress(fromAddress);
+      const toInDkt   = lookups.isDktAddress(toAddress);
 
-      // Classify transfer type
       let transferType;
       if (fromInDkt && toInDkt)       transferType = 'internal';
       else if (!fromInDkt && toInDkt) transferType = 'incoming';
       else if (fromInDkt && !toInDkt) transferType = 'outgoing';
-      else continue; // neither side is DKT — skip
+      else continue;
 
-      // Look up sticker/collection info from inventory if available
       const metaResult = await query(
         'SELECT sticker_name, collection_name FROM current_inventory WHERE nft_address = $1 LIMIT 1',
         [nftAddress]
@@ -166,7 +151,6 @@ async function syncTransfers(wallet, lookups) {
       let stickerName    = metaResult.rows[0]?.sticker_name    ?? transfer.nft_item?.metadata?.name    ?? null;
       let collectionName = metaResult.rows[0]?.collection_name ?? transfer.nft_item?.collection?.name  ?? null;
 
-      // If still missing — fetch NFT metadata directly from TonAPI
       if (!stickerName || !collectionName) {
         const nftData = await getNFTItem(nftAddress);
         if (nftData) {
@@ -175,7 +159,6 @@ async function syncTransfers(wallet, lookups) {
         }
       }
 
-      // Insert with deduplication guard (UNIQUE on nft_address + lt)
       const insertRes = await query(
         `INSERT INTO transfers_history
            (event_timestamp, from_address, from_name, to_address, to_name,
@@ -197,58 +180,51 @@ async function syncTransfers(wallet, lookups) {
         ]
       );
 
-      // Notify if this is a new event AND it's not the very first sync of this wallet (lastLt > 0 avoids spam)
       if (insertRes.rowCount > 0 && Number(lastLt) > 0) {
         const EMOJI = { internal: '🔄', incoming: '📈', outgoing: '📉' };
         const emoji   = EMOJI[transferType] ?? '❓';
-        const from    = fromWallet?.name ?? shortAddr(fromAddress) ?? 'внешний';
-        const to      = toWallet?.name   ?? shortAddr(toAddress)   ?? 'внешний';
+        
+        const fromLabel = fromWallet 
+          ? `*${fromWallet.name}*\n📍 \`${toUserFriendly(fromAddress)}\`` 
+          : `\`${shortAddr(fromAddress)}\` (внешний)`;
+          
+        const toLabel = toWallet 
+          ? `*${toWallet.name}*\n📍 \`${toUserFriendly(toAddress)}\`` 
+          : `\`${shortAddr(toAddress)}\` (внешний)`;
+
         const nftName = stickerName    ?? '(название неизвестно)';
         const colName = collectionName ?? '(коллекция неизвестна)';
         const nftLink = `https://getgems.io/nft/${nftAddress}`;
 
         let notifyText = `${emoji} *Новое движение!*\n`;
         notifyText += `━━━━━━━━━━━━━━━\n`;
-
+        notifyText += `📦 *Стикер:* ${nftName}\n`;
+        notifyText += `📁 *Коллекция:* ${colName}\n`;
+        
         if (transferType === 'internal') {
-          notifyText += `📦 *Стикер:* ${nftName}\n`;
-          notifyText += `📁 *Коллекция:* ${colName}\n`;
-          notifyText += `🔁 *Маршрут:* ${from} → ${to}\n`;
-        } else if (transferType === 'incoming') {
-          notifyText += `📦 *Стикер:* ${nftName}\n`;
-          notifyText += `📁 *Коллекция:* ${colName}\n`;
-          notifyText += `📥 *Получатель:* ${to}\n`;
-          notifyText += `📤 *Отправитель:* ${from}\n`;
-        } else if (transferType === 'outgoing') {
-          notifyText += `📦 *Стикер:* ${nftName}\n`;
-          notifyText += `📁 *Коллекция:* ${colName}\n`;
-          notifyText += `📤 *Отправитель:* ${from}\n`;
-          notifyText += `📥 *Получатель:* ${to}\n`;
+          notifyText += `🔁 *Тип:* Внутренний перевод\n`;
         }
+        
+        notifyText += `📤 *Отправитель:* ${fromLabel}\n`;
+        notifyText += `📥 *Получатель:* ${toLabel}\n`;
 
         await sendTelegramNotification(notifyText, nftLink);
       }
     }
   }
 
-  // Persist the highest lt we've seen for this wallet
   await query(
     `INSERT INTO parser_state (wallet_address, last_event_lt, last_sync_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (wallet_address)
      DO UPDATE SET last_event_lt = EXCLUDED.last_event_lt, last_sync_at = EXCLUDED.last_sync_at`,
-    [wallet.address, maxLt]
+    [walletAddress, maxLt]
   );
 }
 
-/** Returns metadata about the last completed sync cycle (used by the bot). */
+/** Returns metadata about the last completed sync cycle. */
 function getSyncStatus() {
   return { lastSyncAt, lastSyncErrors };
-}
-
-function shortAddr(addr) {
-  if (!addr || addr.length < 12) return addr ?? '—';
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 async function sendTelegramNotification(text, nftLink = null) {
@@ -263,7 +239,6 @@ async function sendTelegramNotification(text, nftLink = null) {
     disable_web_page_preview: true,
   };
 
-  // Attach GetGems button if link is provided
   if (nftLink) {
     payload.reply_markup = {
       inline_keyboard: [
@@ -282,7 +257,6 @@ async function sendTelegramNotification(text, nftLink = null) {
 
 module.exports = { runParser, getSyncStatus };
 
-// Allow running directly for testing: `node src/parser.js`
 if (require.main === module) {
   runParser()
     .then(() => {
