@@ -18,7 +18,7 @@ const MAX_RETRIES = 2;
 
 const httpClient = axios.create({
   baseURL: BASE_URL,
-  timeout: 30_000, 
+  timeout: 30_000,
   headers: process.env.TONAPI_KEY
     ? { Authorization: `Bearer ${process.env.TONAPI_KEY}` }
     : {},
@@ -135,7 +135,7 @@ async function getNFTItem(nftAddress) {
     );
     return res.data;
   } catch (err) {
-    return null; 
+    return null;
   }
 }
 

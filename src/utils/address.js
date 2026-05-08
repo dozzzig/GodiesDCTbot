@@ -1,19 +1,35 @@
-'use strict';
-
 const { Address } = require('@ton/core');
 
 /**
- * PASS-THROUGH: No normalization as requested by user.
+ * Normalizes any TON address format to a lowercase Raw Hex string (0:...).
  */
 function normalizeAddress(input) {
-  return input ? input.trim() : null;
+  if (!input) return null;
+  try {
+    const addr = Address.parse(input.trim());
+    return addr.toRawString().toLowerCase();
+  } catch (err) {
+    return input.trim().toLowerCase(); 
+  }
 }
 
 /**
- * PASS-THROUGH: No conversion as requested by user.
+ * Converts any TON address to a User-friendly Base64 (Non-bounceable) string.
  */
 function toUserFriendly(input) {
-  return input ? input.trim() : null;
+  if (!input) return null;
+  if (input.startsWith('U') || input.startsWith('E')) return input.trim();
+  
+  try {
+    const addr = Address.parse(input.trim());
+    return addr.toString({
+      bounceable: false,
+      testOnly: false,
+      urlSafe: true
+    });
+  } catch (err) {
+    return input.trim(); 
+  }
 }
 
 /**
