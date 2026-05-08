@@ -37,6 +37,12 @@ const TRANSFER_EMOJI = {
   outgoing: '📉',
 };
 
+/** Escapes markdown special characters to prevent API errors. */
+function esc(str) {
+  if (!str) return '';
+  return str.toString().replace(/[_*`\[]/g, '\\$&');
+}
+
 // =============================================================
 // Keyboards
 // =============================================================
@@ -210,8 +216,12 @@ async function getCollectionsText() {
   let text = '📊 *Разбивка по коллекциям:*\n\n';
   let i = 1;
   for (const col of sorted) {
-    text += `*${i}. ${col.name}* — ${col.total} шт.\n`;
-    const walletLine = col.wallets.map((w) => `${w.wallet} (${w.cnt})`).join(', ');
+    if (text.length > 3500) {
+      text += '\n...и другие коллекции.';
+      break;
+    }
+    text += `*${i}. ${esc(col.name)}* — ${col.total} шт.\n`;
+    const walletLine = col.wallets.map((w) => `${esc(w.wallet)} (${w.cnt})`).join(', ');
     text += `   Кошельки: _${walletLine}_\n\n`;
     i++;
   }
@@ -392,6 +402,15 @@ bot.on('callback_query', async (query) => {
     }).catch((e) => {
       if (!e.message.includes('message is not modified')) {
         console.error('[Bot] Edit error:', e.message);
+        console.error('[Bot] Attempted text length:', textOut.length);
+        // Fallback for markdown errors
+        if (e.message.includes('can\'t parse entities')) {
+          bot.editMessageText('❌ Ошибка отображения данных (проблема с Markdown).', {
+            chat_id: msg.chat.id,
+            message_id: msg.message_id,
+            reply_markup: { inline_keyboard: [[{ text: '🔙 В меню', callback_data: 'cmd_main_menu' }]] }
+          }).catch(() => {});
+        }
       }
     });
 
