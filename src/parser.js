@@ -16,7 +16,7 @@ let lastSyncAt = null;
 let lastSyncErrors = [];
 
 // GLOBAL MUTEX: This is critical. It must be outside the function.
-let isParserRunning = false; 
+let isParserRunning = false;
 
 /**
  * Main entry point. Processes all wallets sequentially to respect rate limits.
@@ -142,19 +142,19 @@ async function syncTransfers(wallet, walletAddress, lookups) {
       if (!transfer) continue;
 
       const fromAddress = normalizeAddress(transfer.sender?.address);
-      const toAddress   = normalizeAddress(transfer.recipient?.address);
-      const nftAddress  = normalizeAddress(transfer.nft);
+      const toAddress = normalizeAddress(transfer.recipient?.address);
+      const nftAddress = normalizeAddress(transfer.nft);
 
       if (!nftAddress) continue;
 
       const fromWallet = lookups.getDktWallet(fromAddress);
-      const toWallet   = lookups.getDktWallet(toAddress);
+      const toWallet = lookups.getDktWallet(toAddress);
 
       const fromInDkt = lookups.isDktAddress(fromAddress);
-      const toInDkt   = lookups.isDktAddress(toAddress);
+      const toInDkt = lookups.isDktAddress(toAddress);
 
       let transferType;
-      if (fromInDkt && toInDkt)       transferType = 'internal';
+      if (fromInDkt && toInDkt) transferType = 'internal';
       else if (!fromInDkt && toInDkt) transferType = 'incoming';
       else if (fromInDkt && !toInDkt) transferType = 'outgoing';
       else continue;
@@ -163,14 +163,14 @@ async function syncTransfers(wallet, walletAddress, lookups) {
         'SELECT sticker_name, collection_name FROM current_inventory WHERE nft_address = $1 LIMIT 1',
         [nftAddress]
       );
-      let stickerName    = metaResult.rows[0]?.sticker_name    ?? transfer.nft_item?.metadata?.name    ?? null;
-      let collectionName = metaResult.rows[0]?.collection_name ?? transfer.nft_item?.collection?.name  ?? null;
+      let stickerName = metaResult.rows[0]?.sticker_name ?? transfer.nft_item?.metadata?.name ?? null;
+      let collectionName = metaResult.rows[0]?.collection_name ?? transfer.nft_item?.collection?.name ?? null;
 
       if (!stickerName || !collectionName) {
         const nftData = await getNFTItem(nftAddress);
         if (nftData) {
-          stickerName    = stickerName    ?? nftData.metadata?.name    ?? null;
-          collectionName = collectionName ?? nftData.collection?.name  ?? null;
+          stickerName = stickerName ?? nftData.metadata?.name ?? null;
+          collectionName = collectionName ?? nftData.collection?.name ?? null;
         }
       }
 
@@ -197,17 +197,17 @@ async function syncTransfers(wallet, walletAddress, lookups) {
 
       if (insertRes.rowCount > 0 && Number(lastLt) > 0) {
         const EMOJI = { internal: '🔄', incoming: '📈', outgoing: '📉' };
-        const emoji   = EMOJI[transferType] ?? '❓';
-        
-        const fromLabel = fromWallet 
-          ? `*${fromWallet.name}*\n📍 \`${toUserFriendly(fromAddress)}\`` 
+        const emoji = EMOJI[transferType] ?? '❓';
+
+        const fromLabel = fromWallet
+          ? `*${fromWallet.name}*\n📍 \`${toUserFriendly(fromAddress)}\``
           : `\`${shortAddr(fromAddress)}\` (внешний)`;
-          
-        const toLabel = toWallet 
-          ? `*${toWallet.name}*\n📍 \`${toUserFriendly(toAddress)}\`` 
+
+        const toLabel = toWallet
+          ? `*${toWallet.name}*\n📍 \`${toUserFriendly(toAddress)}\``
           : `\`${shortAddr(toAddress)}\` (внешний)`;
 
-        const nftName = stickerName    ?? '(название неизвестно)';
+        const nftName = stickerName ?? '(название неизвестно)';
         const colName = collectionName ?? '(коллекция неизвестна)';
         const nftLink = `https://getgems.io/nft/${nftAddress}`;
 
@@ -215,11 +215,11 @@ async function syncTransfers(wallet, walletAddress, lookups) {
         notifyText += `━━━━━━━━━━━━━━━\n`;
         notifyText += `📦 *Стикер:* ${nftName}\n`;
         notifyText += `📁 *Коллекция:* ${colName}\n`;
-        
+
         if (transferType === 'internal') {
           notifyText += `🔁 *Тип:* Внутренний перевод\n`;
         }
-        
+
         notifyText += `📤 *Отправитель:* ${fromLabel}\n`;
         notifyText += `📥 *Получатель:* ${toLabel}\n`;
 
