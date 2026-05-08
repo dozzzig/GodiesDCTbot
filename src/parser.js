@@ -167,10 +167,30 @@ async function syncTransfers(wallet, walletAddress, lookups) {
       let collectionName = metaResult.rows[0]?.collection_name ?? transfer.nft_item?.collection?.name ?? null;
 
       if (!stickerName || !collectionName) {
-        const nftData = await getNFTItem(nftAddress);
-        if (nftData) {
-          stickerName = stickerName ?? nftData.metadata?.name ?? null;
-          collectionName = collectionName ?? nftData.collection?.name ?? null;
+        // 1. Check persistent DB cache first
+        const dbMeta = await query(
+          'SELECT name, collection_name FROM nft_metadata WHERE nft_address = $1 LIMIT 1',
+          [nftAddress]
+        );
+        
+        if (dbMeta.rows.length > 0) {
+          stickerName = dbMeta.rows[0].name;
+          collectionName = dbMeta.rows[0].collection_name;
+        } else {
+          // 2. Fallback to TonAPI
+          const nftData = await getNFTItem(nftAddress);
+          if (nftData) {
+            stickerName    = stickerName    ?? nftData.metadata?.name    ?? null;
+            collectionName = collectionName ?? nftData.collection?.name  ?? null;
+            
+            // 3. Save to persistent cache
+            await query(
+              `INSERT INTO nft_metadata (nft_address, name, collection_name)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (nft_address) DO NOTHING`,
+              [nftAddress, stickerName, collectionName]
+            );
+          }
         }
       }
 
