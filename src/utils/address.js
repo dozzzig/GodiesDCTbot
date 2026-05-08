@@ -29,6 +29,9 @@ function normalizeAddress(input) {
  */
 function toUserFriendly(input) {
   if (!input) return null;
+  // If it's already a friendly format, return it
+  if (input.startsWith('U') || input.startsWith('E')) return input;
+  
   try {
     const addr = Address.parse(input);
     return addr.toString({

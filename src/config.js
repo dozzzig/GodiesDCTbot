@@ -59,5 +59,6 @@ function buildWalletLookups(wallets) {
 module.exports = {
   isValidTonFormat,
   getTrackedWallets,
-  buildWalletLookups
+  buildWalletLookups,
+  PARSE_INTERVAL_MIN: parseInt(process.env.PARSE_INTERVAL_MIN, 10) || 60
 };
