@@ -218,12 +218,8 @@ async function getCollectionsText() {
   let i = 1;
 
   for (const col of sorted) {
-    const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}(${w.cnt})`).join(', ');
-    
-    let line = `┌── *${esc(col.name)}*\n`;
-    line += `├ 💎 Всего: *${col.total}*\n`;
-    line += `└ 👥 _${walletInfo}_\n`;
-    line += `━━━━━━━━━━━━━━\n\n`;
+    const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}:${w.cnt}`).join(', ');
+    const line = `${i}. 🏷 *${esc(col.name)}* — **${col.total}** (_${walletInfo}_)\n`;
 
     if (currentText.length + line.length > 3900) {
       messages.push(currentText.trim());
