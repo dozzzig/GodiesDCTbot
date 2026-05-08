@@ -10,6 +10,7 @@ const { query } = require('./db');
 const { getTrackedWallets, isValidTonFormat } = require('./config');
 const { runParser, getSyncStatus } = require('./parser');
 const tonapi = require('./tonapi');
+const { toUserFriendly, shortAddr, normalizeAddress } = require('./utils/address');
 
 const ADMIN_ID = parseInt(process.env.ADMIN_CHAT_ID, 10);
 
@@ -28,11 +29,6 @@ function isAdmin(msg) {
 function fmt(date) {
   if (!date) return 'не было';
   return new Date(date).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-}
-
-function shortAddr(addr) {
-  if (!addr || addr.length < 12) return addr ?? '—';
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 const TRANSFER_EMOJI = {
@@ -132,7 +128,7 @@ async function getWalletText(index) {
   const total = parseInt(totalRes.rows[0].cnt, 10);
 
   let text = `👤 *Кошелёк #${index} — ${wallet.name}*\n`;
-  text += `📍 \`${wallet.address}\`\n`;
+  text += `📍 \`${toUserFriendly(wallet.address)}\`\n`;
   text += `📦 Всего стикеров: *${total}*\n\n`;
 
   if (collRes.rows.length === 0) {
@@ -304,11 +300,11 @@ bot.on('message', async (msg) => {
 
       await query(
         'INSERT INTO tracked_wallets (name, address, wallet_index) VALUES ($1, $2, $3)',
-        [state.name, text, nextIndex]
+        [state.name, normalizeAddress(text), nextIndex]
       );
 
-      delete userState[chatId]; // Clear state
-      return bot.sendMessage(chatId, `✅ Кошелек *${state.name}* успешно добавлен!\n\n(Адрес: \`${text}\`)\nОн появится в статистике при следующем парсинге.`, {
+      delete userState[chatId]; 
+      return bot.sendMessage(chatId, `✅ Кошелек *${state.name}* успешно добавлен!\n\n📍 Адрес: \`${toUserFriendly(text)}\`\nОн появится в статистике при следующем парсинге.`, {
         parse_mode: 'Markdown',
         reply_markup: getMainMenuMarkup()
       });
@@ -413,35 +409,23 @@ bot.on('polling_error', (err) => {
 });
 
 // =============================================================
-// Auto-scheduler: re-run parser automatically every N minutes
+// Background sync is handled by dkt-parser (scheduler.js).
 // =============================================================
-const PARSE_INTERVAL_MIN = parseInt(process.env.PARSE_INTERVAL_MIN, 10) || 60;
-const INTERVAL_MS = PARSE_INTERVAL_MIN * 60 * 1_000;
-
-// Mutex: prevents a new cycle from starting if the previous one is still running
 let isParserRunning = false;
 
-async function safeRunParser() {
-  if (isParserRunning) {
-    console.log('[Scheduler] Skipped — previous cycle still running.');
-    return;
-  }
+async function performRefresh() {
+  if (isParserRunning) return '⚠️ Обновление уже запущено. Подождите...';
   isParserRunning = true;
   try {
-    await runParser();
+    await runParser(); 
+    return await getStatusText();
   } catch (err) {
-    console.error('[Scheduler] Parse error:', err.message);
+    return `❌ Ошибка: ${err.message}`;
   } finally {
     isParserRunning = false;
   }
 }
 
-// Run once on startup
-safeRunParser();
+console.log(`[Bot] DKT analytics bot started (presentation mode)`);
 
-// Then re-run every interval
-setInterval(safeRunParser, INTERVAL_MS);
-
-console.log(`[Bot] DKT analytics bot started (dynamic config mode)`);
-console.log(`[Bot] Auto-sync every ${PARSE_INTERVAL_MIN} min.`);
 

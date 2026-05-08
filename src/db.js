@@ -11,32 +11,30 @@ if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is not set in environment');
 }
 
-// Strip channel_binding param — not supported by pg driver, causes SSL warnings.
-// SSL is enforced via the ssl:{} option below.
-const cleanUrl = process.env.DATABASE_URL
-  .replace(/[&?]channel_binding=[^&]*/g, '')
-  .replace(/[&?]sslmode=[^&]*/g, '');
+const cleanUrl = (process.env.DATABASE_URL || '')
+  .split('?')[0] + '?sslmode=require';
 
-// Pool auto-reconnects on Neon idle-connection drops.
 const pool = new Pool({
   connectionString: cleanUrl,
   ssl: { rejectUnauthorized: false },
-  max: 5,
+  max: 10,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
+  connectionTimeoutMillis: 5_000,
 });
 
 pool.on('error', (err) => {
-  console.error('[DB] Unexpected pool error:', err.message);
+  console.error('[DB] Pool error:', err.message);
 });
 
 /**
- * Executes a parameterized query. Throws on error — callers must handle.
+ * Executes a parameterized query.
  */
 async function query(sql, params = []) {
+  const start = Date.now();
   const client = await pool.connect();
   try {
-    return await client.query(sql, params);
+    const res = await client.query(sql, params);
+    return res;
   } finally {
     client.release();
   }
