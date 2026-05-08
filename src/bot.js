@@ -305,17 +305,24 @@ bot.on('message', async (msg) => {
         throw new Error('Указан заведомо неверный формат строки адреса.');
       }
 
-      // 2. Fetch normalized hex address from TonAPI (just to verify it exists)
+      // 2. Normalize and check for existing
+      const normalized = normalizeAddress(text);
+      const checkRes = await query('SELECT name FROM tracked_wallets WHERE address = $1', [normalized]);
+      if (checkRes.rows.length > 0) {
+        throw new Error(`Этот кошелек уже отслеживается под именем "${checkRes.rows[0].name}".`);
+      }
+
+      // 3. Fetch normalized hex address from TonAPI (just to verify it exists)
       await bot.sendMessage(chatId, `⏳ Проверяю кошелек в TonAPI...`);
       await tonapi.resolveAccount(text);
       
-      // 3. Save to database using the FRIENDLY text string
+      // 4. Save to database
       const maxRes = await query('SELECT MAX(wallet_index) as m FROM tracked_wallets');
       const nextIndex = (parseInt(maxRes.rows[0].m, 10) || 13) + 1;
 
       await query(
         'INSERT INTO tracked_wallets (name, address, wallet_index) VALUES ($1, $2, $3)',
-        [state.name, normalizeAddress(text), nextIndex]
+        [state.name, normalized, nextIndex]
       );
 
       delete userState[chatId]; 
