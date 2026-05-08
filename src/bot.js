@@ -219,7 +219,11 @@ async function getCollectionsText() {
 
   for (const col of sorted) {
     const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}(${w.cnt})`).join(', ');
-    const line = `${i}. *${esc(col.name)}* (${col.total})\n   _${walletInfo}_\n\n`;
+    
+    let line = `┌── *${esc(col.name)}*\n`;
+    line += `├ 💎 Всего: *${col.total}*\n`;
+    line += `└ 👥 _${walletInfo}_\n`;
+    line += `━━━━━━━━━━━━━━\n\n`;
 
     if (currentText.length + line.length > 3900) {
       messages.push(currentText.trim());
