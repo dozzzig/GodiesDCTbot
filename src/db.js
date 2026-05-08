@@ -11,30 +11,22 @@ if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is not set in environment');
 }
 
-const cleanUrl = (process.env.DATABASE_URL || '')
-  .split('?')[0] + '?sslmode=require';
-
 const pool = new Pool({
-  connectionString: cleanUrl,
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
+  connectionTimeoutMillis: 10_000,
 });
 
 pool.on('error', (err) => {
   console.error('[DB] Pool error:', err.message);
 });
 
-/**
- * Executes a parameterized query.
- */
 async function query(sql, params = []) {
-  const start = Date.now();
   const client = await pool.connect();
   try {
-    const res = await client.query(sql, params);
-    return res;
+    return await client.query(sql, params);
   } finally {
     client.release();
   }
