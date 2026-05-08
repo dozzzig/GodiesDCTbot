@@ -96,7 +96,7 @@ async function getStatsText() {
      ORDER BY cnt DESC`
   );
 
-  let text = `📊 *Общий баланс ДКТ:* ${total} стикеров\n\n`;
+  let text = `📊 *Общее количество NFT:* ${total} стикеров\n\n`;
   text += '*По коллекциям:*\n';
 
   if (collRes.rows.length === 0) {
@@ -243,7 +243,7 @@ async function getWalletsListText() {
 
   const countMap = new Map(res.rows.map((r) => [r.wallet_address, parseInt(r.cnt, 10)]));
 
-  let text = '📋 *Кошельки ДКТ:*\n\n';
+  let text = '📋 *Кошельки:*\n\n';
   for (const w of wallets) {
     const cnt = countMap.get(w.address) ?? 0;
     text += `*#${w.index}* — ${w.name}: *${cnt}* шт.\n`;
@@ -259,7 +259,7 @@ async function getStatusText() {
   const total = parseInt(inventoryRes.rows[0].cnt, 10);
   const transfers = parseInt(transfersRes.rows[0].cnt, 10);
 
-  let text = `⚙️ *Технический статус ДКТ-аналитика*\n\n`;
+  let text = `⚙️ *Технический статус*\n\n`;
   text += `🕐 Последний срез: _${fmt(lastSyncAt)}_\n`;
   text += `📦 Записей в инвентаре: *${total}*\n`;
   text += `📜 Записей в истории: *${transfers}*\n`;
@@ -337,7 +337,7 @@ bot.on('message', async (msg) => {
   // Fallback to Main Menu
   if (msg.text) {
     if (state) delete userState[chatId]; // Force clearing state on stray messages
-    await bot.sendMessage(chatId, '*Жмякай на кнопки*', {
+    await bot.sendMessage(chatId, '*НАВИГАЦИЯ*', {
       parse_mode: 'Markdown',
       reply_markup: getMainMenuMarkup()
     });
@@ -359,12 +359,12 @@ bot.on('callback_query', async (query) => {
   try {
     if (data === 'cmd_main_menu') {
       delete userState[chatId]; // Clear states if navigating home
-      textOut = '*Жмякай на кнопки*';
+      textOut = '*НАВИГАЦИЯ*';
       markupOut = getMainMenuMarkup();
     } else if (data === 'cmd_notification_menu') {
       // Sent from a notification — don't edit the notification, send a fresh menu
       await bot.answerCallbackQuery(query.id).catch(() => {});
-      await bot.sendMessage(chatId, '*Жмякай на кнопки*', {
+      await bot.sendMessage(chatId, '*НАВИГАЦИЯ*', {
         parse_mode: 'Markdown',
         reply_markup: getMainMenuMarkup()
       });
