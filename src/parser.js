@@ -35,20 +35,24 @@ async function runParser() {
     const wallets = await getTrackedWallets();
     const lookups = buildWalletLookups(wallets);
 
-  // STRICT SEQUENTIAL LOOP: for...of ensures each wallet finishes before the next starts
-  for (const wallet of wallets) {
-    try {
-      await processWallet(wallet, lookups);
-    } catch (err) {
-      const msg = `${wallet.name}: ${err.message}`;
-      console.error(`[Parser] ⚠️  Error processing ${msg}`);
-      lastSyncErrors.push(msg);
+    // STRICT SEQUENTIAL LOOP
+    for (const wallet of wallets) {
+      try {
+        await processWallet(wallet, lookups);
+      } catch (err) {
+        const msg = `${wallet.name}: ${err.message}`;
+        console.error(`[Parser] ⚠️  Error processing ${msg}`);
+        lastSyncErrors.push(msg);
+      }
     }
-  }
 
-  lastSyncAt = new Date();
-  console.log(`[Parser] Sync complete at ${lastSyncAt.toISOString()}. Errors: ${lastSyncErrors.length}`);
-  isParserRunning = false;
+    lastSyncAt = new Date();
+    console.log(`[Parser] Sync complete at ${lastSyncAt.toISOString()}. Errors: ${lastSyncErrors.length}`);
+  } catch (err) {
+    console.error('[Parser] Fatal cycle error:', err.message);
+  } finally {
+    isParserRunning = false;
+  }
 }
 
 /**
