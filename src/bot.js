@@ -140,13 +140,16 @@ async function getWalletText(index) {
 
   const dataRes = await query(`
     SELECT 
-      (SELECT COUNT(*) FROM current_inventory WHERE wallet_address = $1) AS total_cnt,
-      (SELECT SUM(coll_sum) FROM (
-        SELECT MAX(floor_price) * COUNT(*) AS coll_sum
-        FROM current_inventory
-        WHERE wallet_address = $1
-        GROUP BY collection_name
-      ) sub) AS total_sum
+      COUNT(ci.nft_address) AS total_cnt,
+      SUM(COALESCE(gp.global_floor, 0)) AS total_sum
+    FROM current_inventory ci
+    LEFT JOIN (
+      SELECT collection_name, MAX(floor_price) AS global_floor
+      FROM current_inventory
+      WHERE collection_name IS NOT NULL
+      GROUP BY collection_name
+    ) gp ON ci.collection_name = gp.collection_name
+    WHERE ci.wallet_address = $1
   `, [wallet.address]);
 
   const total = parseInt(dataRes.rows[0].total_cnt, 10);
@@ -154,13 +157,19 @@ async function getWalletText(index) {
 
   const collRes = await query(`
     SELECT 
-      collection_name, 
-      COUNT(*) AS cnt, 
-      MAX(floor_price) AS floor_price,
-      SUM(COALESCE(floor_price, 0)) AS coll_total_sum
-    FROM current_inventory
-    WHERE wallet_address = $1
-    GROUP BY collection_name
+      ci.collection_name, 
+      COUNT(ci.nft_address) AS cnt, 
+      MAX(gp.global_floor) AS floor_price,
+      COALESCE(MAX(gp.global_floor), 0) * COUNT(ci.nft_address) AS coll_total_sum
+    FROM current_inventory ci
+    LEFT JOIN (
+      SELECT collection_name, MAX(floor_price) AS global_floor
+      FROM current_inventory
+      WHERE collection_name IS NOT NULL
+      GROUP BY collection_name
+    ) gp ON ci.collection_name = gp.collection_name
+    WHERE ci.wallet_address = $1
+    GROUP BY ci.collection_name
     ORDER BY cnt DESC
   `, [wallet.address]);
 
@@ -296,27 +305,18 @@ async function getCollectionsText() {
 async function getWalletsListText() {
   const res = await query(`
     SELECT 
-      tw.wallet_index,
-      tw.name,
-      tw.address,
-      COALESCE(agg.cnt, 0) AS cnt,
-      COALESCE(agg.total_value, 0) AS total_value
+      tw.wallet_index, tw.name, tw.address,
+      COUNT(ci.nft_address) AS cnt,
+      SUM(COALESCE(gp.global_floor, 0)) AS total_value
     FROM tracked_wallets tw
+    LEFT JOIN current_inventory ci ON tw.address = ci.wallet_address
     LEFT JOIN (
-      SELECT 
-        wallet_address,
-        SUM(cnt) AS cnt,
-        SUM(coll_sum) AS total_value
-      FROM (
-        SELECT 
-          wallet_address,
-          COUNT(*) AS cnt,
-          MAX(floor_price) * COUNT(*) AS coll_sum
-        FROM current_inventory
-        GROUP BY wallet_address, collection_name
-      ) sub1
-      GROUP BY wallet_address
-    ) agg ON tw.address = agg.wallet_address
+      SELECT collection_name, MAX(floor_price) AS global_floor
+      FROM current_inventory
+      WHERE collection_name IS NOT NULL
+      GROUP BY collection_name
+    ) gp ON ci.collection_name = gp.collection_name
+    GROUP BY tw.wallet_index, tw.name, tw.address
     ORDER BY tw.wallet_index ASC
   `);
 
