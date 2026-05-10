@@ -121,7 +121,7 @@ async function syncInventory(wallet, walletAddress, floorPriceCache) {
          sticker_name       = EXCLUDED.sticker_name,
          collection_name    = EXCLUDED.collection_name,
          collection_address = EXCLUDED.collection_address,
-         floor_price        = EXCLUDED.floor_price,
+         floor_price        = COALESCE(EXCLUDED.floor_price, current_inventory.floor_price),
          updated_at         = EXCLUDED.updated_at`,
       [walletAddress, wallet.name, nftAddress, stickerName, collectionName, collectionAddress, floorPrice, now]
     );

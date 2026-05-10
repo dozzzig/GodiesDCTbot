@@ -88,9 +88,12 @@ function getBackMarkup() {
 async function getStatsText() {
   const totalRes = await query(`
     SELECT 
-      COUNT(*) AS total,
-      SUM(COALESCE(floor_price, 0)) AS total_sum
-    FROM current_inventory
+      (SELECT COUNT(*) FROM current_inventory) AS total,
+      (SELECT SUM(coll_sum) FROM (
+        SELECT MAX(floor_price) * COUNT(*) AS coll_sum
+        FROM current_inventory
+        GROUP BY collection_name
+      ) sub) AS total_sum
   `);
   
   const total = parseInt(totalRes.rows[0].total, 10);
@@ -137,10 +140,13 @@ async function getWalletText(index) {
 
   const dataRes = await query(`
     SELECT 
-      COUNT(*) AS total_cnt,
-      SUM(COALESCE(floor_price, 0)) AS total_sum
-    FROM current_inventory
-    WHERE wallet_address = $1
+      (SELECT COUNT(*) FROM current_inventory WHERE wallet_address = $1) AS total_cnt,
+      (SELECT SUM(coll_sum) FROM (
+        SELECT MAX(floor_price) * COUNT(*) AS coll_sum
+        FROM current_inventory
+        WHERE wallet_address = $1
+        GROUP BY collection_name
+      ) sub) AS total_sum
   `, [wallet.address]);
 
   const total = parseInt(dataRes.rows[0].total_cnt, 10);
@@ -219,7 +225,14 @@ async function getMovesText() {
 }
 
 async function getCollectionsText() {
-  const sumRes = await query(`SELECT SUM(COALESCE(floor_price, 0)) AS total_sum FROM current_inventory`);
+  const sumRes = await query(`
+    SELECT SUM(coll_sum) AS total_sum 
+    FROM (
+      SELECT MAX(floor_price) * COUNT(*) AS coll_sum
+      FROM current_inventory
+      GROUP BY collection_name
+    ) sub
+  `);
   const totalValueStr = parseFloat(parseFloat(sumRes.rows[0].total_sum || 0).toFixed(2));
 
   const res = await query(
@@ -286,11 +299,14 @@ async function getWalletsListText() {
       tw.wallet_index,
       tw.name,
       tw.address,
-      COUNT(ci.nft_address) AS cnt,
-      SUM(COALESCE(ci.floor_price, 0)) AS total_value
+      (SELECT COUNT(*) FROM current_inventory ci WHERE ci.wallet_address = tw.address) AS cnt,
+      (SELECT SUM(coll_sum) FROM (
+         SELECT MAX(floor_price) * COUNT(*) AS coll_sum
+         FROM current_inventory ci2
+         WHERE ci2.wallet_address = tw.address
+         GROUP BY collection_name
+       ) sub) AS total_value
     FROM tracked_wallets tw
-    LEFT JOIN current_inventory ci ON tw.address = ci.wallet_address
-    GROUP BY tw.wallet_index, tw.name, tw.address
     ORDER BY tw.wallet_index ASC
   `);
 
