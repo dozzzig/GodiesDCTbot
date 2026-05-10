@@ -116,7 +116,7 @@ async function getStatsText() {
       let floorStr = '';
       if (row.floor_price) {
         const sumPrice = parseFloat((row.cnt * parseFloat(row.floor_price)).toFixed(2));
-        floorStr = ` | 💎 ${row.floor_price} (∑ ${sumPrice})`;
+        floorStr = ` | ${row.floor_price}💎 - ${sumPrice}💎`;
       }
       text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
     }
@@ -169,7 +169,7 @@ async function getWalletText(index) {
       let floorStr = '';
       if (row.floor_price) {
         const sumPrice = parseFloat((row.cnt * parseFloat(row.floor_price)).toFixed(2));
-        floorStr = ` | 💎 ${row.floor_price} (∑ ${sumPrice})`;
+        floorStr = ` | ${row.floor_price}💎 - ${sumPrice}💎`;
       }
       text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
     }
@@ -265,7 +265,7 @@ async function getCollectionsText() {
     let floorStr = '';
     if (col.floor_price) {
       const sumPrice = parseFloat((col.total * parseFloat(col.floor_price)).toFixed(2));
-      floorStr = ` | 💎 ${col.floor_price} (∑ ${sumPrice})`;
+      floorStr = ` | ${col.floor_price}💎 - ${sumPrice}💎`;
     }
     // Compact single-line format: fits ~2x more collections per message
     const line = `${i}. *${esc(col.name)}* — ${col.total} шт.${floorStr} _(${walletInfo})_\n`;
@@ -308,7 +308,7 @@ async function getWalletsListText() {
   let text = '📋 *Кошельки:*\n\n';
   for (const w of wallets) {
     const data = walletData.get(w.address) ?? { cnt: 0, totalValue: 0 };
-    const floorStr = data.totalValue > 0 ? ` | 💎 ~${parseFloat(data.totalValue.toFixed(2))}` : '';
+    const floorStr = data.totalValue > 0 ? ` | ~${parseFloat(data.totalValue.toFixed(2))}💎` : '';
     text += `*#${w.index}* — ${w.name}: *${data.cnt}* шт.${floorStr}\n`;
   }
   return text;
