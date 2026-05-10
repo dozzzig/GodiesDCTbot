@@ -86,24 +86,29 @@ function getBackMarkup() {
 // =============================================================
 
 async function getStatsText() {
-  const totalRes = await query('SELECT COUNT(*) AS total FROM current_inventory');
+  const totalRes = await query(`
+    SELECT 
+      COUNT(*) AS total,
+      SUM(COALESCE(floor_price, 0)) AS total_sum
+    FROM current_inventory
+  `);
+  
   const total = parseInt(totalRes.rows[0].total, 10);
+  const totalValue = parseFloat(parseFloat(totalRes.rows[0].total_sum || 0).toFixed(2));
 
-  const collRes = await query(
-    `SELECT collection_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
-     FROM current_inventory
-     GROUP BY collection_name
-     ORDER BY cnt DESC`
-  );
-
-  let totalValue = 0;
-  for (const row of collRes.rows) {
-    if (row.floor_price) totalValue += row.cnt * parseFloat(row.floor_price);
-  }
-  const totalValueStr = totalValue > 0 ? parseFloat(totalValue.toFixed(2)) : 0;
+  const collRes = await query(`
+    SELECT 
+      collection_name, 
+      COUNT(*) AS cnt, 
+      MAX(floor_price) AS floor_price,
+      SUM(COALESCE(floor_price, 0)) AS coll_total_sum
+    FROM current_inventory
+    GROUP BY collection_name
+    ORDER BY cnt DESC
+  `);
 
   let text = `📊 *Общее количество NFT:* ${total} стикеров\n`;
-  text += `💎 сумма стикеров - *${totalValueStr}*💎\n`;
+  text += `💎 сумма стикеров - *${totalValue}*💎\n`;
   text += `\n*По коллекциям:*\n`;
 
   if (collRes.rows.length === 0) {
@@ -113,7 +118,7 @@ async function getStatsText() {
       const name = row.collection_name ?? '(без коллекции)';
       let floorStr = '';
       if (row.floor_price) {
-        const sumPrice = parseFloat((row.cnt * parseFloat(row.floor_price)).toFixed(2));
+        const sumPrice = parseFloat(parseFloat(row.coll_total_sum || 0).toFixed(2));
         floorStr = ` | ${row.floor_price}💎 - ${sumPrice}💎`;
       }
       text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
@@ -130,31 +135,33 @@ async function getWalletText(index) {
   const wallet = wallets.find(w => w.index === index);
   if (!wallet) return '⚠️ Неверный номер кошелька.';
 
-  const collRes = await query(
-    `SELECT collection_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
-     FROM current_inventory
-     WHERE wallet_address = $1
-     GROUP BY collection_name
-     ORDER BY cnt DESC`,
-    [wallet.address]
-  );
+  const dataRes = await query(`
+    SELECT 
+      COUNT(*) AS total_cnt,
+      SUM(COALESCE(floor_price, 0)) AS total_sum
+    FROM current_inventory
+    WHERE wallet_address = $1
+  `, [wallet.address]);
 
-  const totalRes = await query(
-    'SELECT COUNT(*) AS cnt FROM current_inventory WHERE wallet_address = $1',
-    [wallet.address]
-  );
-  const total = parseInt(totalRes.rows[0].cnt, 10);
+  const total = parseInt(dataRes.rows[0].total_cnt, 10);
+  const totalValue = parseFloat(parseFloat(dataRes.rows[0].total_sum || 0).toFixed(2));
 
-  let totalValue = 0;
-  for (const row of collRes.rows) {
-    if (row.floor_price) totalValue += row.cnt * parseFloat(row.floor_price);
-  }
-  const totalValueStr = totalValue > 0 ? parseFloat(totalValue.toFixed(2)) : 0;
+  const collRes = await query(`
+    SELECT 
+      collection_name, 
+      COUNT(*) AS cnt, 
+      MAX(floor_price) AS floor_price,
+      SUM(COALESCE(floor_price, 0)) AS coll_total_sum
+    FROM current_inventory
+    WHERE wallet_address = $1
+    GROUP BY collection_name
+    ORDER BY cnt DESC
+  `, [wallet.address]);
 
   let text = `👤 *Кошелёк #${index} — ${wallet.name}*\n`;
   text += `📍 \`${toUserFriendly(wallet.address)}\`\n`;
   text += `📦 Всего стикеров: *${total}*\n`;
-  text += `💎 сумма стикеров - *${totalValueStr}*💎\n`;
+  text += `💎 сумма стикеров - *${totalValue}*💎\n`;
   text += `\n`;
 
   if (collRes.rows.length === 0) {
@@ -164,7 +171,7 @@ async function getWalletText(index) {
       const name = row.collection_name ?? '(без коллекции)';
       let floorStr = '';
       if (row.floor_price) {
-        const sumPrice = parseFloat((row.cnt * parseFloat(row.floor_price)).toFixed(2));
+        const sumPrice = parseFloat(parseFloat(row.coll_total_sum || 0).toFixed(2));
         floorStr = ` | ${row.floor_price}💎 - ${sumPrice}💎`;
       }
       text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
@@ -212,6 +219,9 @@ async function getMovesText() {
 }
 
 async function getCollectionsText() {
+  const sumRes = await query(`SELECT SUM(COALESCE(floor_price, 0)) AS total_sum FROM current_inventory`);
+  const totalValueStr = parseFloat(parseFloat(sumRes.rows[0].total_sum || 0).toFixed(2));
+
   const res = await query(
     `SELECT collection_name, wallet_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
      FROM current_inventory
@@ -242,12 +252,6 @@ async function getCollectionsText() {
     }))
     .sort((a, b) => b.total - a.total);
 
-  let totalValue = 0;
-  for (const col of sorted) {
-    if (col.floor_price) totalValue += col.total * parseFloat(col.floor_price);
-  }
-  const totalValueStr = totalValue > 0 ? parseFloat(totalValue.toFixed(2)) : 0;
-
   const messages = [];
   let currentText = '🏆 *Разбивка по коллекциям:*\n';
   currentText += `💎 сумма стикеров - *${totalValueStr}*💎\n`;
@@ -277,34 +281,24 @@ async function getCollectionsText() {
 }
 
 async function getWalletsListText() {
-  const wallets = await getTrackedWallets();
-  const res = await query(
-    `SELECT wallet_address, wallet_name, collection_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
-     FROM current_inventory
-     GROUP BY wallet_address, wallet_name, collection_name`
-  );
-
-  const walletData = new Map();
-  for (const w of wallets) {
-    walletData.set(w.address, { cnt: 0, totalValue: 0 });
-  }
-
-  for (const row of res.rows) {
-    const wData = walletData.get(row.wallet_address);
-    if (wData) {
-      wData.cnt += parseInt(row.cnt, 10);
-      if (row.floor_price) {
-        wData.totalValue += parseInt(row.cnt, 10) * parseFloat(row.floor_price);
-      }
-    }
-  }
+  const res = await query(`
+    SELECT 
+      tw.wallet_index,
+      tw.name,
+      tw.address,
+      COUNT(ci.nft_address) AS cnt,
+      SUM(COALESCE(ci.floor_price, 0)) AS total_value
+    FROM tracked_wallets tw
+    LEFT JOIN current_inventory ci ON tw.address = ci.wallet_address
+    GROUP BY tw.wallet_index, tw.name, tw.address
+    ORDER BY tw.wallet_index ASC
+  `);
 
   let text = '📋 *Кошельки:*\n\n';
-  for (const w of wallets) {
-    const data = walletData.get(w.address) ?? { cnt: 0, totalValue: 0 };
-    const floorVal = parseFloat(data.totalValue.toFixed(2));
+  for (const row of res.rows) {
+    const floorVal = parseFloat(parseFloat(row.total_value || 0).toFixed(2));
     const floorStr = ` - сумма стикеров ${floorVal}💎`;
-    text += `*#${w.index}* — ${w.name}: *${data.cnt}* шт.${floorStr}\n`;
+    text += `*#${row.wallet_index}* — ${row.name}: *${row.cnt}* шт.${floorStr}\n`;
   }
   return text;
 }
