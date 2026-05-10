@@ -103,9 +103,7 @@ async function getStatsText() {
   const totalValueStr = totalValue > 0 ? parseFloat(totalValue.toFixed(2)) : 0;
 
   let text = `📊 *Общее количество NFT:* ${total} стикеров\n`;
-  if (totalValueStr > 0) {
-    text += `💎 *Общая стоимость:* ~${totalValueStr}\n`;
-  }
+  text += `💎 сумма стикеров - *${totalValueStr}*💎\n`;
   text += `\n*По коллекциям:*\n`;
 
   if (collRes.rows.length === 0) {
@@ -156,10 +154,7 @@ async function getWalletText(index) {
   let text = `👤 *Кошелёк #${index} — ${wallet.name}*\n`;
   text += `📍 \`${toUserFriendly(wallet.address)}\`\n`;
   text += `📦 Всего стикеров: *${total}*\n`;
-  if (totalValueStr > 0) {
-    text += `💎 *Общая стоимость:* ~${totalValueStr}\n`;
-  }
-  text += `\n`;
+  text += `💎 сумма стикеров - *${totalValueStr}*💎\n\n`;
 
   if (collRes.rows.length === 0) {
     text += '_(пусто)_\n';
@@ -254,10 +249,7 @@ async function getCollectionsText() {
 
   const messages = [];
   let currentText = '🏆 *Разбивка по коллекциям:*\n';
-  if (totalValueStr > 0) {
-    currentText += `💎 *Общая стоимость:* ~${totalValueStr}\n`;
-  }
-  currentText += `\n`;
+  currentText += `💎 сумма стикеров - *${totalValueStr}*💎\n\n`;
   let i = 1;
 
   for (const col of sorted) {
@@ -308,8 +300,8 @@ async function getWalletsListText() {
   let text = '📋 *Кошельки:*\n\n';
   for (const w of wallets) {
     const data = walletData.get(w.address) ?? { cnt: 0, totalValue: 0 };
-    const floorStr = data.totalValue > 0 ? ` | ~${parseFloat(data.totalValue.toFixed(2))}💎` : '';
-    text += `*#${w.index}* — ${w.name}: *${data.cnt}* шт.${floorStr}\n`;
+    const floorVal = parseFloat(data.totalValue.toFixed(2));
+    text += `*#${w.index}* — ${w.name}: *${data.cnt}* шт. - сумма стикеров ${floorVal}💎\n`;
   }
   return text;
 }
