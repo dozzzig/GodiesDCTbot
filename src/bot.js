@@ -299,14 +299,24 @@ async function getWalletsListText() {
       tw.wallet_index,
       tw.name,
       tw.address,
-      (SELECT COUNT(*) FROM current_inventory ci WHERE ci.wallet_address = tw.address) AS cnt,
-      (SELECT SUM(coll_sum) FROM (
-         SELECT MAX(floor_price) * COUNT(*) AS coll_sum
-         FROM current_inventory ci2
-         WHERE ci2.wallet_address = tw.address
-         GROUP BY collection_name
-       ) sub) AS total_value
+      COALESCE(agg.cnt, 0) AS cnt,
+      COALESCE(agg.total_value, 0) AS total_value
     FROM tracked_wallets tw
+    LEFT JOIN (
+      SELECT 
+        wallet_address,
+        SUM(cnt) AS cnt,
+        SUM(coll_sum) AS total_value
+      FROM (
+        SELECT 
+          wallet_address,
+          COUNT(*) AS cnt,
+          MAX(floor_price) * COUNT(*) AS coll_sum
+        FROM current_inventory
+        GROUP BY wallet_address, collection_name
+      ) sub1
+      GROUP BY wallet_address
+    ) agg ON tw.address = agg.wallet_address
     ORDER BY tw.wallet_index ASC
   `);
 
