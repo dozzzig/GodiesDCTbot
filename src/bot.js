@@ -96,16 +96,29 @@ async function getStatsText() {
      ORDER BY cnt DESC`
   );
 
-  let text = `📊 *Общее количество NFT:* ${total} стикеров\n\n`;
-  text += '*По коллекциям:*\n';
+  let totalValue = 0;
+  for (const row of collRes.rows) {
+    if (row.floor_price) totalValue += row.cnt * parseFloat(row.floor_price);
+  }
+  const totalValueStr = totalValue > 0 ? parseFloat(totalValue.toFixed(2)) : 0;
+
+  let text = `📊 *Общее количество NFT:* ${total} стикеров\n`;
+  if (totalValueStr > 0) {
+    text += `💎 *Общая стоимость:* ~${totalValueStr}\n`;
+  }
+  text += `\n*По коллекциям:*\n`;
 
   if (collRes.rows.length === 0) {
     text += '_(нет данных)_\n';
   } else {
     for (const row of collRes.rows) {
       const name = row.collection_name ?? '(без коллекции)';
-      const floor = row.floor_price ? ` | 💎 ${row.floor_price}` : '';
-      text += `• ${name} — *${row.cnt}* шт.${floor}\n`;
+      let floorStr = '';
+      if (row.floor_price) {
+        const sumPrice = parseFloat((row.cnt * parseFloat(row.floor_price)).toFixed(2));
+        floorStr = ` | 💎 ${row.floor_price} (∑ ${sumPrice})`;
+      }
+      text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
     }
   }
 
@@ -134,17 +147,31 @@ async function getWalletText(index) {
   );
   const total = parseInt(totalRes.rows[0].cnt, 10);
 
+  let totalValue = 0;
+  for (const row of collRes.rows) {
+    if (row.floor_price) totalValue += row.cnt * parseFloat(row.floor_price);
+  }
+  const totalValueStr = totalValue > 0 ? parseFloat(totalValue.toFixed(2)) : 0;
+
   let text = `👤 *Кошелёк #${index} — ${wallet.name}*\n`;
   text += `📍 \`${toUserFriendly(wallet.address)}\`\n`;
-  text += `📦 Всего стикеров: *${total}*\n\n`;
+  text += `📦 Всего стикеров: *${total}*\n`;
+  if (totalValueStr > 0) {
+    text += `💎 *Общая стоимость:* ~${totalValueStr}\n`;
+  }
+  text += `\n`;
 
   if (collRes.rows.length === 0) {
     text += '_(пусто)_\n';
   } else {
     for (const row of collRes.rows) {
       const name = row.collection_name ?? '(без коллекции)';
-      const floor = row.floor_price ? ` | 💎 ${row.floor_price}` : '';
-      text += `• ${name} — *${row.cnt}* шт.${floor}\n`;
+      let floorStr = '';
+      if (row.floor_price) {
+        const sumPrice = parseFloat((row.cnt * parseFloat(row.floor_price)).toFixed(2));
+        floorStr = ` | 💎 ${row.floor_price} (∑ ${sumPrice})`;
+      }
+      text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
     }
   }
 
@@ -219,15 +246,29 @@ async function getCollectionsText() {
     }))
     .sort((a, b) => b.total - a.total);
 
+  let totalValue = 0;
+  for (const col of sorted) {
+    if (col.floor_price) totalValue += col.total * parseFloat(col.floor_price);
+  }
+  const totalValueStr = totalValue > 0 ? parseFloat(totalValue.toFixed(2)) : 0;
+
   const messages = [];
-  let currentText = '🏆 *Разбивка по коллекциям:*\n\n';
+  let currentText = '🏆 *Разбивка по коллекциям:*\n';
+  if (totalValueStr > 0) {
+    currentText += `💎 *Общая стоимость:* ~${totalValueStr}\n`;
+  }
+  currentText += `\n`;
   let i = 1;
 
   for (const col of sorted) {
     const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}:${w.cnt}`).join(', ');
-    const floor = col.floor_price ? ` | 💎 *${col.floor_price}*` : '';
+    let floorStr = '';
+    if (col.floor_price) {
+      const sumPrice = parseFloat((col.total * parseFloat(col.floor_price)).toFixed(2));
+      floorStr = ` | 💎 ${col.floor_price} (∑ ${sumPrice})`;
+    }
     // Compact single-line format: fits ~2x more collections per message
-    const line = `${i}. *${esc(col.name)}* — ${col.total} шт.${floor} _(${walletInfo})_\n`;
+    const line = `${i}. *${esc(col.name)}* — ${col.total} шт.${floorStr} _(${walletInfo})_\n`;
 
     if (currentText.length + line.length > 3900) {
       messages.push(currentText.trim());
