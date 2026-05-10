@@ -60,6 +60,7 @@ async function getCollectionFloorPrice(collectionAddress) {
       const items = response.data?.nft_items ?? [];
 
       for (const item of items) {
+        if (item.sale?.price?.token_name !== 'TON') continue;
         const priceStr = item.sale?.price?.value;
         if (!priceStr) continue;
 
