@@ -48,9 +48,9 @@ async function getCollectionFloorPrice(collectionAddress) {
   let minPriceNano = null;
 
   try {
-    // Check up to 2 pages to balance coverage vs. API call count
-    for (let page = 0; page < 2; page++) {
-      if (page > 0) await sleep(2000); // rate-limit between pages
+    // Scan up to 20 pages (2000 items) to guarantee we find the floor price
+    for (let page = 0; page < 20; page++) {
+      if (page > 0) await sleep(1500); // rate-limit between pages
 
       const response = await httpClient.get(
         `/nfts/collections/${friendly}/items`,
@@ -73,10 +73,6 @@ async function getCollectionFloorPrice(collectionAddress) {
 
       // No more pages if fewer items than limit were returned
       if (items.length < PAGE_LIMIT) break;
-
-      // If we already found at least one listing, one page is enough
-      // for a reliable floor estimate on most collections
-      if (minPriceNano !== null) break;
     }
   } catch (err) {
     console.warn(`[FloorPrice] Failed for ${friendly}: ${err.message}`);
