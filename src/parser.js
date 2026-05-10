@@ -9,7 +9,11 @@ const { getTrackedWallets, buildWalletLookups } = require('./config');
 const { query } = require('./db');
 const { getNFTsByWallet, getAccountEvents, getNFTItem } = require('./tonapi');
 const { normalizeAddress, toUserFriendly, shortAddr } = require('./utils/address');
+const { getCollectionFloorPrice } = require('./getgems');
 const axios = require('axios');
+
+/** Pause execution for `ms` milliseconds. */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Tracks the last sync timestamp for /status command
 let lastSyncAt = null;
@@ -83,23 +87,39 @@ async function syncInventory(wallet, walletAddress) {
   const now = new Date().toISOString();
   const currentNftAddresses = nftItems.map((item) => normalizeAddress(item.address));
 
+  // Per-wallet cache: one Getgems request per unique collection, not per NFT
+  const floorPriceCache = new Map();
+
   for (const item of nftItems) {
     const nftAddress = normalizeAddress(item.address);
     const stickerName = item.metadata?.name ?? null;
     const collectionName = item.collection?.name ?? null;
     const collectionAddress = normalizeAddress(item.collection?.address) ?? null;
 
+    // Fetch floor price from cache or Getgems (only if collection exists)
+    let floorPrice = null;
+    if (collectionAddress) {
+      if (floorPriceCache.has(collectionAddress)) {
+        floorPrice = floorPriceCache.get(collectionAddress);
+      } else {
+        await sleep(2000); // Rate-limit protection for Getgems
+        floorPrice = await getCollectionFloorPrice(collectionAddress);
+        floorPriceCache.set(collectionAddress, floorPrice);
+      }
+    }
+
     await query(
       `INSERT INTO current_inventory
-         (wallet_address, wallet_name, nft_address, sticker_name, collection_name, collection_address, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (wallet_address, wallet_name, nft_address, sticker_name, collection_name, collection_address, floor_price, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (wallet_address, nft_address)
        DO UPDATE SET
          sticker_name       = EXCLUDED.sticker_name,
          collection_name    = EXCLUDED.collection_name,
          collection_address = EXCLUDED.collection_address,
+         floor_price        = EXCLUDED.floor_price,
          updated_at         = EXCLUDED.updated_at`,
-      [walletAddress, wallet.name, nftAddress, stickerName, collectionName, collectionAddress, now]
+      [walletAddress, wallet.name, nftAddress, stickerName, collectionName, collectionAddress, floorPrice, now]
     );
   }
 
