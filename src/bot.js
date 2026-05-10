@@ -285,17 +285,31 @@ async function getCollectionsText() {
 async function getWalletsListText() {
   const wallets = await getTrackedWallets();
   const res = await query(
-    `SELECT wallet_address, wallet_name, COUNT(*) AS cnt
+    `SELECT wallet_address, wallet_name, collection_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
      FROM current_inventory
-     GROUP BY wallet_address, wallet_name`
+     GROUP BY wallet_address, wallet_name, collection_name`
   );
 
-  const countMap = new Map(res.rows.map((r) => [r.wallet_address, parseInt(r.cnt, 10)]));
+  const walletData = new Map();
+  for (const w of wallets) {
+    walletData.set(w.address, { cnt: 0, totalValue: 0 });
+  }
+
+  for (const row of res.rows) {
+    const wData = walletData.get(row.wallet_address);
+    if (wData) {
+      wData.cnt += parseInt(row.cnt, 10);
+      if (row.floor_price) {
+        wData.totalValue += parseInt(row.cnt, 10) * parseFloat(row.floor_price);
+      }
+    }
+  }
 
   let text = '📋 *Кошельки:*\n\n';
   for (const w of wallets) {
-    const cnt = countMap.get(w.address) ?? 0;
-    text += `*#${w.index}* — ${w.name}: *${cnt}* шт.\n`;
+    const data = walletData.get(w.address) ?? { cnt: 0, totalValue: 0 };
+    const floorStr = data.totalValue > 0 ? ` | 💎 ~${parseFloat(data.totalValue.toFixed(2))}` : '';
+    text += `*#${w.index}* — ${w.name}: *${data.cnt}* шт.${floorStr}\n`;
   }
   return text;
 }
