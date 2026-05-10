@@ -104,7 +104,7 @@ async function getStatsText() {
   } else {
     for (const row of collRes.rows) {
       const name = row.collection_name ?? '(без коллекции)';
-      const floor = row.floor_price ? ` | 💰 ${row.floor_price} TON` : '';
+      const floor = row.floor_price ? ` | 💎 ${row.floor_price}` : '';
       text += `• ${name} — *${row.cnt}* шт.${floor}\n`;
     }
   }
@@ -143,7 +143,7 @@ async function getWalletText(index) {
   } else {
     for (const row of collRes.rows) {
       const name = row.collection_name ?? '(без коллекции)';
-      const floor = row.floor_price ? ` | 💰 ${row.floor_price} TON` : '';
+      const floor = row.floor_price ? ` | 💎 ${row.floor_price}` : '';
       text += `• ${name} — *${row.cnt}* шт.${floor}\n`;
     }
   }
@@ -225,8 +225,9 @@ async function getCollectionsText() {
 
   for (const col of sorted) {
     const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}:${w.cnt}`).join(', ');
-    const floor = col.floor_price ? ` | 💰 *${col.floor_price} TON*` : '';
-    const line = `${i}. 🏷 *${esc(col.name)}* — ${col.total} шт.${floor}\n   _${walletInfo}_\n`;
+    const floor = col.floor_price ? ` | 💎 *${col.floor_price}*` : '';
+    // Compact single-line format: fits ~2x more collections per message
+    const line = `${i}. *${esc(col.name)}* — ${col.total} шт.${floor} _(${walletInfo})_\n`;
 
     if (currentText.length + line.length > 3900) {
       messages.push(currentText.trim());
@@ -395,13 +396,18 @@ bot.on('callback_query', async (query) => {
       textOut = await getStatsText();
     } else if (data === 'cmd_collections') {
       const texts = await getCollectionsText();
-      // First part: Edit current message
       textOut = texts[0];
-      // Remaining parts: Send as new messages
+      // Send remaining pages as new messages; add back button to the last one
       if (texts.length > 1) {
         for (let j = 1; j < texts.length; j++) {
-          await bot.sendMessage(msg.chat.id, texts[j], { parse_mode: 'Markdown' });
+          const isLast = j === texts.length - 1;
+          await bot.sendMessage(msg.chat.id, texts[j], {
+            parse_mode: 'Markdown',
+            reply_markup: isLast ? getBackMarkup() : undefined,
+          });
         }
+        // First message (editMessageText) needs no back button if more follow
+        markupOut = undefined;
       }
     } else if (data === 'cmd_moves') {
       textOut = await getMovesText();
