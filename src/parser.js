@@ -40,9 +40,13 @@ async function runParser() {
     const lookups = buildWalletLookups(wallets);
 
     // STRICT SEQUENTIAL LOOP
+    // Global cache for the entire sync cycle to avoid querying TonAPI for the same collection across different wallets
+    const globalFloorPriceCache = new Map();
+
     for (const wallet of wallets) {
       try {
-        await processWallet(wallet, lookups);
+        console.log(`[Parser] Processing ${wallet.name} (${wallet.address})`);
+        await processWallet(wallet, lookups, globalFloorPriceCache);
       } catch (err) {
         const msg = `${wallet.name}: ${err.message}`;
         console.error(`[Parser] ⚠️  Error processing ${msg}`);
@@ -62,18 +66,21 @@ async function runParser() {
 /**
  * Processes a single wallet.
  */
-async function processWallet(wallet, lookups) {
-  const normalizedWalletAddr = normalizeAddress(wallet.address);
-  console.log(`[Parser] Processing ${wallet.name} (${toUserFriendly(normalizedWalletAddr)})`);
+async function processWallet(wallet, lookups, globalFloorPriceCache) {
+  const walletAddress = normalizeAddress(wallet.address);
+  if (!walletAddress) return;
 
-  await syncInventory(wallet, normalizedWalletAddr);
-  await syncTransfers(wallet, normalizedWalletAddr, lookups);
+  // 1. Sync Inventory (current snapshot)
+  await syncInventory(wallet, walletAddress, globalFloorPriceCache);
+
+  // 2. Sync Transfers (history)
+  await syncTransfers(wallet, walletAddress, lookups);
 }
 
 /**
  * Fetches NFTs for the wallet and upserts them into current_inventory.
  */
-async function syncInventory(wallet, walletAddress) {
+async function syncInventory(wallet, walletAddress, floorPriceCache) {
   const nftItems = await getNFTsByWallet(walletAddress);
 
   if (nftItems.length === 0) {
@@ -86,9 +93,6 @@ async function syncInventory(wallet, walletAddress) {
 
   const now = new Date().toISOString();
   const currentNftAddresses = nftItems.map((item) => normalizeAddress(item.address));
-
-  // Per-wallet cache: one Getgems request per unique collection, not per NFT
-  const floorPriceCache = new Map();
 
   for (const item of nftItems) {
     const nftAddress = normalizeAddress(item.address);
