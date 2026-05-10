@@ -14,9 +14,8 @@ const { toUserFriendly } = require('./utils/address');
 
 const BASE_URL = 'https://tonapi.io/v2';
 const REQUEST_TIMEOUT_MS = 20_000;
-// 1000 items per page is the TonAPI maximum.
-// For most TON NFT collections this single page covers all items.
-const PAGE_LIMIT = 1000;
+// 100 items per page to prevent TonAPI 500 Internal Server Errors.
+const PAGE_LIMIT = 100;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
