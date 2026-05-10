@@ -90,7 +90,7 @@ async function getStatsText() {
   const total = parseInt(totalRes.rows[0].total, 10);
 
   const collRes = await query(
-    `SELECT collection_name, COUNT(*) AS cnt
+    `SELECT collection_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
      FROM current_inventory
      GROUP BY collection_name
      ORDER BY cnt DESC`
@@ -104,7 +104,8 @@ async function getStatsText() {
   } else {
     for (const row of collRes.rows) {
       const name = row.collection_name ?? '(без коллекции)';
-      text += `• ${name} — *${row.cnt}* шт.\n`;
+      const floor = row.floor_price ? ` | 💰 ${row.floor_price} TON` : '';
+      text += `• ${name} — *${row.cnt}* шт.${floor}\n`;
     }
   }
 
@@ -119,7 +120,7 @@ async function getWalletText(index) {
   if (!wallet) return '⚠️ Неверный номер кошелька.';
 
   const collRes = await query(
-    `SELECT collection_name, COUNT(*) AS cnt
+    `SELECT collection_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
      FROM current_inventory
      WHERE wallet_address = $1
      GROUP BY collection_name
@@ -142,7 +143,8 @@ async function getWalletText(index) {
   } else {
     for (const row of collRes.rows) {
       const name = row.collection_name ?? '(без коллекции)';
-      text += `• ${name} — *${row.cnt}* шт.\n`;
+      const floor = row.floor_price ? ` | 💰 ${row.floor_price} TON` : '';
+      text += `• ${name} — *${row.cnt}* шт.${floor}\n`;
     }
   }
 
@@ -188,7 +190,7 @@ async function getMovesText() {
 
 async function getCollectionsText() {
   const res = await query(
-    `SELECT collection_name, wallet_name, COUNT(*) AS cnt
+    `SELECT collection_name, wallet_name, COUNT(*) AS cnt, MAX(floor_price) AS floor_price
      FROM current_inventory
      GROUP BY collection_name, wallet_name
      ORDER BY collection_name, cnt DESC`
@@ -201,34 +203,39 @@ async function getCollectionsText() {
   const collections = new Map();
   for (const row of res.rows) {
     const name = row.collection_name ?? '(без коллекции)';
-    if (!collections.has(name)) collections.set(name, []);
-    collections.get(name).push({ wallet: row.wallet_name, cnt: parseInt(row.cnt, 10) });
+    if (!collections.has(name)) collections.set(name, { wallets: [], floor_price: null });
+    const entry = collections.get(name);
+    entry.wallets.push({ wallet: row.wallet_name, cnt: parseInt(row.cnt, 10) });
+    // Keep the first non-null floor_price found for this collection
+    if (!entry.floor_price && row.floor_price) entry.floor_price = row.floor_price;
   }
 
   const sorted = [...collections.entries()]
-    .map(([name, wallets]) => ({
+    .map(([name, data]) => ({
       name,
-      total: wallets.reduce((sum, w) => sum + w.cnt, 0),
-      wallets,
+      total: data.wallets.reduce((sum, w) => sum + w.cnt, 0),
+      wallets: data.wallets,
+      floor_price: data.floor_price,
     }))
     .sort((a, b) => b.total - a.total);
 
   const messages = [];
-  let currentText = '📊 *Разбивка по коллекциям:*\n\n';
+  let currentText = '🏆 *Разбивка по коллекциям:*\n\n';
   let i = 1;
 
   for (const col of sorted) {
     const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}:${w.cnt}`).join(', ');
-    const line = `${i}. 🏷 *${esc(col.name)}* — **${col.total}** (_${walletInfo}_)\n`;
+    const floor = col.floor_price ? ` | 💰 *${col.floor_price} TON*` : '';
+    const line = `${i}. 🏷 *${esc(col.name)}* — ${col.total} шт.${floor}\n   _${walletInfo}_\n`;
 
     if (currentText.length + line.length > 3900) {
       messages.push(currentText.trim());
-      currentText = ''; 
+      currentText = '';
     }
     currentText += line;
     i++;
   }
-  
+
   if (currentText) messages.push(currentText.trim());
   return messages;
 }
