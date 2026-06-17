@@ -94,22 +94,6 @@ function getBackMarkup() {
  * Avoids sending a wall of text by capping the list and pointing to 🏆 for full data.
  */
 async function getStatsText() {
-  const summaryRes = await query(`
-    SELECT
-      COUNT(*)                                            AS total,
-      COUNT(DISTINCT collection_name)                     AS total_colls,
-      SUM(coll_sum) OVER ()                               AS total_value
-    FROM (
-      SELECT
-        collection_name,
-        MAX(floor_price) * COUNT(*) AS coll_sum
-      FROM current_inventory
-      GROUP BY collection_name
-    ) sub
-    LIMIT 1
-  `);
-
-  // Fallback query if the window-function approach returns no rows
   const totalsRes = await query(`
     SELECT
       (SELECT COUNT(*) FROM current_inventory)                        AS total,
