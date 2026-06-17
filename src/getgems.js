@@ -28,12 +28,18 @@ const httpClient = axios.create({
     : {},
 });
 
+// Scan at most 3 pages (300 items). Floor listings appear near the top of
+// TonAPI responses; scanning beyond 300 items has diminishing returns and
+// made the parser hang for hours with the original limit of 20 pages.
+const MAX_FLOOR_PAGES = 3;
+const PAGE_DELAY_MS = 500;
+
 /**
  * Fetches the floor price for an NFT collection by scanning active
  * Getgems sale contracts via TonAPI collection items endpoint.
  *
- * Scans up to 2 pages (2000 items). Returns the minimum active sale
- * price found, or null if no listings exist / on any error.
+ * Scans up to MAX_FLOOR_PAGES pages (300 items). Returns the minimum active
+ * sale price found, or null if no listings exist / on any error.
  *
  * @param {string} collectionAddress - Any TON address format (0:hex or base64).
  * @returns {number|null} Floor price in TON rounded to 2 decimals, or null.
@@ -48,9 +54,8 @@ async function getCollectionFloorPrice(collectionAddress) {
   let minPriceNano = null;
 
   try {
-    // Scan up to 20 pages (2000 items) to guarantee we find the floor price
-    for (let page = 0; page < 20; page++) {
-      if (page > 0) await sleep(1500); // rate-limit between pages
+    for (let page = 0; page < MAX_FLOOR_PAGES; page++) {
+      if (page > 0) await sleep(PAGE_DELAY_MS);
 
       const response = await httpClient.get(
         `/nfts/collections/${friendly}/items`,

@@ -19,8 +19,12 @@ if (!ADMIN_ID) throw new Error('ADMIN_CHAT_ID is not set');
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-// Conversational Memory
+// Conversational state per chat
 const userState = {};
+
+// FIX BUG 1: Single mutex — declared once, used by the one performRefresh below.
+// Original file had two declarations; the first lacked this guard entirely.
+let isParserRunning = false;
 
 function isAdmin(msg) {
   return msg.from?.id === ADMIN_ID || msg.chat?.id === ADMIN_ID;
@@ -37,7 +41,7 @@ const TRANSFER_EMOJI = {
   outgoing: '📉',
 };
 
-/** Escapes markdown special characters to prevent API errors. */
+/** Escapes Markdown special characters to prevent Telegram API errors. */
 function esc(str) {
   if (!str) return '';
   return str.toString().replace(/[_*`\[]/g, '\\$&');
@@ -52,7 +56,7 @@ function getMainMenuMarkup() {
     inline_keyboard: [
       [{ text: '📊 Общая статистика', callback_data: 'cmd_stats' }, { text: '🏆 Коллекции', callback_data: 'cmd_collections' }],
       [{ text: '🔄 Движения за 24ч', callback_data: 'cmd_moves' }, { text: '📋 Все кошельки', callback_data: 'cmd_wallets_list' }],
-      [{ text: '👤 Выбрать кошелек', callback_data: 'cmd_select_wallet' }],
+      [{ text: '📊 Показать таблицу', callback_data: 'cmd_table' }, { text: '👤 Выбрать кошелек', callback_data: 'cmd_select_wallet' }],
       [{ text: '⚙️ Статус парсера', callback_data: 'cmd_status' }, { text: '🔄 Обновить сейчас', callback_data: 'cmd_refresh' }],
       [{ text: '➕ Добавить кошелек', callback_data: 'cmd_add_wallet' }]
     ]
@@ -85,47 +89,76 @@ function getBackMarkup() {
 // Data Fetchers
 // =============================================================
 
+/**
+ * Compact stats overview: header block + top-10 collections.
+ * Avoids sending a wall of text by capping the list and pointing to 🏆 for full data.
+ */
 async function getStatsText() {
-  const totalRes = await query(`
-    SELECT 
-      (SELECT COUNT(*) FROM current_inventory) AS total,
-      (SELECT SUM(coll_sum) FROM (
-        SELECT MAX(floor_price) * COUNT(*) AS coll_sum
-        FROM current_inventory
-        GROUP BY collection_name
-      ) sub) AS total_sum
+  const summaryRes = await query(`
+    SELECT
+      COUNT(*)                                            AS total,
+      COUNT(DISTINCT collection_name)                     AS total_colls,
+      SUM(coll_sum) OVER ()                               AS total_value
+    FROM (
+      SELECT
+        collection_name,
+        MAX(floor_price) * COUNT(*) AS coll_sum
+      FROM current_inventory
+      GROUP BY collection_name
+    ) sub
+    LIMIT 1
   `);
-  
-  const total = parseInt(totalRes.rows[0].total, 10);
-  const totalValue = parseFloat(parseFloat(totalRes.rows[0].total_sum || 0).toFixed(2));
 
+  // Fallback query if the window-function approach returns no rows
+  const totalsRes = await query(`
+    SELECT
+      (SELECT COUNT(*) FROM current_inventory)                        AS total,
+      (SELECT COUNT(DISTINCT collection_name) FROM current_inventory) AS total_colls,
+      (SELECT SUM(sub.coll_sum) FROM (
+         SELECT MAX(floor_price) * COUNT(*) AS coll_sum
+         FROM current_inventory GROUP BY collection_name
+       ) sub)                                                         AS total_value
+  `);
+
+  const total      = parseInt(totalsRes.rows[0].total, 10);
+  const totalColls = parseInt(totalsRes.rows[0].total_colls, 10);
+  const totalValue = parseFloat(parseFloat(totalsRes.rows[0].total_value || 0).toFixed(2));
+
+  // Top-10 collections only — keeps the message short and readable
   const collRes = await query(`
-    SELECT 
-      collection_name, 
-      COUNT(*) AS cnt, 
+    SELECT
+      collection_name,
+      COUNT(*)         AS cnt,
       MAX(floor_price) AS floor_price,
-      SUM(COALESCE(floor_price, 0)) AS coll_total_sum
+      MAX(floor_price) * COUNT(*) AS coll_total_sum
     FROM current_inventory
     GROUP BY collection_name
     ORDER BY cnt DESC
+    LIMIT 10
   `);
 
-  let text = `📊 *Общее количество NFT:* ${total} стикеров\n`;
-  text += `💎 сумма стикеров - *${totalValue}*💎\n`;
-  text += `\n*По коллекциям:*\n`;
+  // Compact summary block
+  let text = `📊 *Статистика DKT*\n\n`;
+  text += `🃏 Стикеров всего: *${total}*\n`;
+  if (totalValue > 0) {
+    text += `💎 Стоимость: *${totalValue} TON*\n`;
+  }
+  text += `🗂 Коллекций: *${totalColls}*\n`;
+  text += `\n*Топ-${Math.min(10, collRes.rows.length)} коллекций:*\n`;
 
-  if (collRes.rows.length === 0) {
-    text += '_(нет данных)_\n';
-  } else {
-    for (const row of collRes.rows) {
-      const name = row.collection_name ?? '(без коллекции)';
-      let floorStr = '';
-      if (row.floor_price) {
-        const sumPrice = parseFloat(parseFloat(row.coll_total_sum || 0).toFixed(2));
-        floorStr = ` | ${row.floor_price}💎 - ${sumPrice}💎`;
-      }
-      text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
+  for (const row of collRes.rows) {
+    const name = esc(row.collection_name ?? '(без коллекции)');
+    const cnt  = row.cnt;
+    if (row.floor_price) {
+      const sumPrice = parseFloat(parseFloat(row.coll_total_sum || 0).toFixed(2));
+      text += `• ${name} — *${cnt}* шт. \\| ${row.floor_price}💎 \\= ${sumPrice}💎\n`;
+    } else {
+      text += `• ${name} — *${cnt}* шт.\n`;
     }
+  }
+
+  if (totalColls > 10) {
+    text += `_...ещё ${totalColls - 10} — смотри 🏆 Коллекции_\n`;
   }
 
   const { lastSyncAt } = getSyncStatus();
@@ -133,14 +166,22 @@ async function getStatsText() {
   return text;
 }
 
+/**
+ * FIX BUG 2+3: Normalize wallet address before SQL queries.
+ * tracked_wallets stores Base64; current_inventory stores hex.
+ * Without normalization WHERE clause never matches → empty results.
+ */
 async function getWalletText(index) {
   const wallets = await getTrackedWallets();
   const wallet = wallets.find(w => w.index === index);
   if (!wallet) return '⚠️ Неверный номер кошелька.';
 
+  // Always query inventory with the normalized hex address
+  const walletAddr = normalizeAddress(wallet.address) ?? wallet.address;
+
   const dataRes = await query(`
-    SELECT 
-      COUNT(ci.nft_address) AS total_cnt,
+    SELECT
+      COUNT(ci.nft_address)          AS total_cnt,
       SUM(COALESCE(gp.global_floor, 0)) AS total_sum
     FROM current_inventory ci
     LEFT JOIN (
@@ -150,17 +191,17 @@ async function getWalletText(index) {
       GROUP BY collection_name
     ) gp ON ci.collection_name = gp.collection_name
     WHERE ci.wallet_address = $1
-  `, [wallet.address]);
+  `, [walletAddr]);
 
-  const total = parseInt(dataRes.rows[0].total_cnt, 10);
+  const total      = parseInt(dataRes.rows[0].total_cnt, 10);
   const totalValue = parseFloat(parseFloat(dataRes.rows[0].total_sum || 0).toFixed(2));
 
   const collRes = await query(`
-    SELECT 
-      ci.collection_name, 
-      COUNT(ci.nft_address) AS cnt, 
-      MAX(gp.global_floor) AS floor_price,
-      COALESCE(MAX(gp.global_floor), 0) * COUNT(ci.nft_address) AS coll_total_sum
+    SELECT
+      ci.collection_name,
+      COUNT(ci.nft_address)                                        AS cnt,
+      MAX(gp.global_floor)                                         AS floor_price,
+      COALESCE(MAX(gp.global_floor), 0) * COUNT(ci.nft_address)   AS coll_total_sum
     FROM current_inventory ci
     LEFT JOIN (
       SELECT collection_name, MAX(floor_price) AS global_floor
@@ -171,23 +212,23 @@ async function getWalletText(index) {
     WHERE ci.wallet_address = $1
     GROUP BY ci.collection_name
     ORDER BY cnt DESC
-  `, [wallet.address]);
+  `, [walletAddr]);
 
   let text = `👤 *Кошелёк #${index} — ${wallet.name}*\n`;
   text += `📍 \`${toUserFriendly(wallet.address)}\`\n`;
-  text += `📦 Всего стикеров: *${total}*\n`;
-  text += `💎 сумма стикеров - *${totalValue}*💎\n`;
+  text += `📦 Стикеров: *${total}*\n`;
+  if (totalValue > 0) text += `💎 Сумма: *${totalValue} TON*\n`;
   text += `\n`;
 
   if (collRes.rows.length === 0) {
     text += '_(пусто)_\n';
   } else {
     for (const row of collRes.rows) {
-      const name = row.collection_name ?? '(без коллекции)';
+      const name = esc(row.collection_name ?? '(без коллекции)');
       let floorStr = '';
       if (row.floor_price) {
         const sumPrice = parseFloat(parseFloat(row.coll_total_sum || 0).toFixed(2));
-        floorStr = ` | ${row.floor_price}💎 - ${sumPrice}💎`;
+        floorStr = ` \\| ${row.floor_price}💎 \\= ${sumPrice}💎`;
       }
       text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
     }
@@ -225,9 +266,9 @@ async function getMovesText() {
     if (row.transfer_type === 'internal') {
       text += `${emoji} \`${time}\` — ${from} → ${to}: _${nft}${coll}_\n`;
     } else if (row.transfer_type === 'incoming') {
-      text += `${emoji} \`${time}\` — ${to}: +1 _${nft}${coll}_ (пополнение от ${from})\n`;
+      text += `${emoji} \`${time}\` — ${to}: +1 _${nft}${coll}_ (от ${from})\n`;
     } else if (row.transfer_type === 'outgoing') {
-      text += `${emoji} \`${time}\` — ${from}: -1 _${nft}${coll}_ (выбытие к ${to})\n`;
+      text += `${emoji} \`${time}\` — ${from}: -1 _${nft}${coll}_ (к ${to})\n`;
     }
   }
   return text;
@@ -235,7 +276,7 @@ async function getMovesText() {
 
 async function getCollectionsText() {
   const sumRes = await query(`
-    SELECT SUM(coll_sum) AS total_sum 
+    SELECT SUM(coll_sum) AS total_sum
     FROM (
       SELECT MAX(floor_price) * COUNT(*) AS coll_sum
       FROM current_inventory
@@ -276,8 +317,7 @@ async function getCollectionsText() {
 
   const messages = [];
   let currentText = '🏆 *Разбивка по коллекциям:*\n';
-  currentText += `💎 сумма стикеров - *${totalValueStr}*💎\n`;
-  currentText += `\n`;
+  currentText += `💎 сумма стикеров — *${totalValueStr}* TON\n\n`;
   let i = 1;
 
   for (const col of sorted) {
@@ -285,10 +325,9 @@ async function getCollectionsText() {
     let floorStr = '';
     if (col.floor_price) {
       const sumPrice = parseFloat((col.total * parseFloat(col.floor_price)).toFixed(2));
-      floorStr = ` | ${col.floor_price}💎 - ${sumPrice}💎`;
+      floorStr = ` \\| ${col.floor_price}💎 \\= ${sumPrice}💎`;
     }
-    // Compact single-line format: fits ~2x more collections per message
-    const line = `${i}. *${esc(col.name)}* — ${col.total} шт.${floorStr} _(${walletInfo})_\n`;
+    const line = `${i}\\. *${esc(col.name)}* — ${col.total} шт.${floorStr} _(${walletInfo})_\n`;
 
     if (currentText.length + line.length > 3900) {
       messages.push(currentText.trim());
@@ -302,30 +341,123 @@ async function getCollectionsText() {
   return messages;
 }
 
+/**
+ * FIX BUG 2: getWalletsListText — was using a SQL JOIN between tracked_wallets
+ * (Base64 addresses) and current_inventory (hex addresses), which always returned
+ * 0 stickers. Now fetches per-wallet counts individually using normalized addresses.
+ */
 async function getWalletsListText() {
-  const res = await query(`
-    SELECT 
-      tw.wallet_index, tw.name, tw.address,
-      COUNT(ci.nft_address) AS cnt,
-      SUM(COALESCE(gp.global_floor, 0)) AS total_value
-    FROM tracked_wallets tw
-    LEFT JOIN current_inventory ci ON tw.address = ci.wallet_address
-    LEFT JOIN (
-      SELECT collection_name, MAX(floor_price) AS global_floor
-      FROM current_inventory
-      WHERE collection_name IS NOT NULL
-      GROUP BY collection_name
-    ) gp ON ci.collection_name = gp.collection_name
-    GROUP BY tw.wallet_index, tw.name, tw.address
-    ORDER BY tw.wallet_index ASC
-  `);
+  const wallets = await getTrackedWallets();
+
+  // Run per-wallet queries with normalized hex addresses
+  const rows = await Promise.all(wallets.map(async (w) => {
+    const addr = normalizeAddress(w.address) ?? w.address;
+    const res = await query(`
+      SELECT
+        COUNT(ci.nft_address)             AS cnt,
+        SUM(COALESCE(gp.global_floor, 0)) AS total_value
+      FROM current_inventory ci
+      LEFT JOIN (
+        SELECT collection_name, MAX(floor_price) AS global_floor
+        FROM current_inventory
+        WHERE collection_name IS NOT NULL
+        GROUP BY collection_name
+      ) gp ON ci.collection_name = gp.collection_name
+      WHERE ci.wallet_address = $1
+    `, [addr]);
+
+    return {
+      index: w.index,
+      name: w.name,
+      cnt: parseInt(res.rows[0]?.cnt ?? 0, 10),
+      total_value: parseFloat(res.rows[0]?.total_value ?? 0),
+    };
+  }));
+
+  rows.sort((a, b) => a.index - b.index);
 
   let text = '📋 *Кошельки:*\n\n';
-  for (const row of res.rows) {
-    const floorVal = parseFloat(parseFloat(row.total_value || 0).toFixed(2));
-    const floorStr = ` - сумма стикеров ${floorVal}💎`;
-    text += `*#${row.wallet_index}* — ${row.name}: *${row.cnt}* шт.${floorStr}\n`;
+  for (const row of rows) {
+    const floorVal = parseFloat(row.total_value.toFixed(2));
+    const floorStr = floorVal > 0 ? ` — *${floorVal}* 💎` : '';
+    text += `*#${row.index}* ${row.name}: *${row.cnt}* шт.${floorStr}\n`;
   }
+  return text;
+}
+
+/**
+ * NEW: Builds a compact monospace summary table of sticker counts by collection.
+ * Uses a fixed-width code block for alignment — readable even on mobile.
+ */
+async function getTableText() {
+  const wallets = await getTrackedWallets();
+
+  const collRes = await query(`
+    SELECT
+      collection_name,
+      COUNT(*)         AS total,
+      MAX(floor_price) AS floor_price
+    FROM current_inventory
+    GROUP BY collection_name
+    ORDER BY total DESC
+  `);
+
+  if (collRes.rows.length === 0) {
+    return '_(нет данных в инвентаре)_';
+  }
+
+  // Per-wallet totals (for the summary line below the table)
+  const walletTotals = await Promise.all(wallets.map(async (w) => {
+    const addr = normalizeAddress(w.address) ?? w.address;
+    const res = await query(
+      'SELECT COUNT(*) AS cnt FROM current_inventory WHERE wallet_address = $1',
+      [addr]
+    );
+    return { name: w.name, cnt: parseInt(res.rows[0]?.cnt ?? 0, 10) };
+  }));
+
+  const grandTotal = collRes.rows.reduce((s, r) => s + parseInt(r.total, 10), 0);
+  const totalValue = collRes.rows.reduce((s, r) => {
+    return s + (r.floor_price ? parseFloat(r.floor_price) * parseInt(r.total, 10) : 0);
+  }, 0);
+
+  const { lastSyncAt } = getSyncStatus();
+
+  // Fixed column widths for monospace alignment
+  const NAME_W = 22;
+  const CNT_W  = 5;
+  const SEP    = '─'.repeat(NAME_W + CNT_W + 4);
+
+  const pad  = (s, w) => String(s).slice(0, w).padEnd(w);
+  const rpad = (s, w) => String(s).slice(0, w).padStart(w);
+
+  let table = '';
+  table += `${pad('Коллекция', NAME_W)} │ ${rpad('Шт', CNT_W)}\n`;
+  table += `${SEP}\n`;
+
+  for (const row of collRes.rows) {
+    const name = pad(row.collection_name ?? '(без коллекции)', NAME_W);
+    const cnt  = rpad(row.total, CNT_W);
+    table += `${name} │ ${cnt}\n`;
+  }
+
+  table += `${SEP}\n`;
+  table += `${pad('ИТОГО', NAME_W)} │ ${rpad(grandTotal, CNT_W)}\n`;
+
+  const walletLine = walletTotals
+    .filter(w => w.cnt > 0)
+    .map(w => `${w.name}: ${w.cnt}`)
+    .join('  |  ');
+
+  // Wrap table in code block for monospace rendering
+  let text = `\`\`\`\n${table}\`\`\`\n`;
+  if (totalValue > 0) {
+    text += `💎 Стоимость: *${parseFloat(totalValue.toFixed(2))} TON*\n`;
+  }
+  if (walletLine) {
+    text += `\n👤 *По кошелькам:*\n\`${walletLine}\`\n`;
+  }
+  text += `\n⏱ _Срез: ${fmt(lastSyncAt)}_`;
   return text;
 }
 
@@ -334,7 +466,7 @@ async function getStatusText() {
 
   const inventoryRes = await query('SELECT COUNT(*) AS cnt FROM current_inventory');
   const transfersRes = await query('SELECT COUNT(*) AS cnt FROM transfers_history');
-  const total = parseInt(inventoryRes.rows[0].cnt, 10);
+  const total     = parseInt(inventoryRes.rows[0].cnt, 10);
   const transfers = parseInt(transfersRes.rows[0].cnt, 10);
 
   let text = `⚙️ *Технический статус*\n\n`;
@@ -351,9 +483,22 @@ async function getStatusText() {
   return text;
 }
 
+/**
+ * FIX BUG 1: Single authoritative performRefresh with mutex guard.
+ * The original bot.js had two function declarations with the same name;
+ * the first (line 354) lacked the isParserRunning guard entirely.
+ */
 async function performRefresh() {
-  await runParser(); 
-  return await getStatusText();
+  if (isParserRunning) return '⚠️ Обновление уже запущено. Подождите...';
+  isParserRunning = true;
+  try {
+    await runParser();
+    return await getStatusText();
+  } catch (err) {
+    return `❌ Ошибка: ${err.message}`;
+  } finally {
+    isParserRunning = false;
+  }
 }
 
 // =============================================================
@@ -363,7 +508,7 @@ async function performRefresh() {
 bot.on('message', async (msg) => {
   if (!isAdmin(msg)) return;
   const chatId = msg.chat.id;
-  const text = msg.text?.trim();
+  const text   = msg.text?.trim();
 
   // Routing for active conversational flows
   const state = userState[chatId];
@@ -375,7 +520,7 @@ bot.on('message', async (msg) => {
       reply_markup: { inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cmd_main_menu' }]] }
     });
   }
-  
+
   if (state?.step === 'ADD_WALLET_ADDR') {
     try {
       // 1. Validate string format
@@ -383,23 +528,25 @@ bot.on('message', async (msg) => {
         throw new Error('Указан заведомо неверный формат строки адреса.');
       }
 
-      // 2. Normalize and check for existing (check both raw and normalized)
+      // 2. Normalize and check for existing wallet
       const normalized = normalizeAddress(text);
+      if (!normalized) throw new Error('Не удалось разобрать адрес TON.');
+
       const checkRes = await query(
         'SELECT name FROM tracked_wallets WHERE address = $1 OR address = $2',
         [text, normalized]
       );
-      
+
       if (checkRes.rows.length > 0) {
         throw new Error(`Этот кошелек уже отслеживается под именем "${checkRes.rows[0].name}".`);
       }
 
-      // 3. Fetch normalized hex address from TonAPI (just to verify it exists)
+      // 3. Verify address exists in TonAPI
       await bot.sendMessage(chatId, `⏳ Проверяю кошелек в TonAPI...`);
       await tonapi.resolveAccount(text);
-      
-      // 4. Save to database
-      const maxRes = await query('SELECT MAX(wallet_index) as m FROM tracked_wallets');
+
+      // 4. Save to database (store normalized hex address for consistency)
+      const maxRes   = await query('SELECT MAX(wallet_index) as m FROM tracked_wallets');
       const nextIndex = (parseInt(maxRes.rows[0].m, 10) || 13) + 1;
 
       await query(
@@ -407,25 +554,30 @@ bot.on('message', async (msg) => {
         [state.name, normalized, nextIndex]
       );
 
-      delete userState[chatId]; 
-      return bot.sendMessage(chatId, `✅ Кошелек *${state.name}* успешно добавлен!\n\n📍 Адрес: \`${toUserFriendly(text)}\`\nОн появится в статистике при следующем парсинге.`, {
-        parse_mode: 'Markdown',
-        reply_markup: getMainMenuMarkup()
-      });
+      delete userState[chatId];
+      return bot.sendMessage(
+        chatId,
+        `✅ Кошелек *${state.name}* успешно добавлен!\n\n📍 Адрес: \`${toUserFriendly(text)}\`\nОн появится в статистике при следующем парсинге.`,
+        { parse_mode: 'Markdown', reply_markup: getMainMenuMarkup() }
+      );
     } catch (err) {
       let errStr = err.message;
       if (errStr.includes('duplicate key value')) errStr = 'Кошелек с таким адресом или именем уже существует в базе.';
-      
-      return bot.sendMessage(chatId, `❌ *Ошибка добавления:*\n_${errStr}_\n\nПопробуй отправить корректный адрес еще раз или нажми Отмена:`, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cmd_main_menu' }]] }
-      });
+
+      return bot.sendMessage(
+        chatId,
+        `❌ *Ошибка добавления:*\n_${errStr}_\n\nПопробуй отправить корректный адрес ещё раз или нажми Отмена:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cmd_main_menu' }]] }
+        }
+      );
     }
   }
 
-  // Fallback to Main Menu
+  // Fallback — show main menu on any plain text
   if (msg.text) {
-    if (state) delete userState[chatId]; // Force clearing state on stray messages
+    if (state) delete userState[chatId];
     await bot.sendMessage(chatId, '*НАВИГАЦИЯ*', {
       parse_mode: 'Markdown',
       reply_markup: getMainMenuMarkup()
@@ -433,41 +585,45 @@ bot.on('message', async (msg) => {
   }
 });
 
-bot.on('callback_query', async (query) => {
-  if (!query.message) return;
-  if (!isAdmin(query)) {
-    return bot.answerCallbackQuery(query.id, { text: 'Доступ запрещен', show_alert: true });
+bot.on('callback_query', async (cbQuery) => {
+  if (!cbQuery.message) return;
+  if (!isAdmin(cbQuery)) {
+    return bot.answerCallbackQuery(cbQuery.id, { text: 'Доступ запрещен', show_alert: true });
   }
 
-  const data = query.data;
-  const msg = query.message;
+  const data   = cbQuery.data;
+  const msg    = cbQuery.message;
   const chatId = msg.chat.id;
-  let textOut = '';
+  let textOut   = '';
   let markupOut = getBackMarkup();
 
   try {
     if (data === 'cmd_main_menu') {
-      delete userState[chatId]; // Clear states if navigating home
-      textOut = '*НАВИГАЦИЯ*';
+      delete userState[chatId];
+      textOut   = '*НАВИГАЦИЯ*';
       markupOut = getMainMenuMarkup();
+
     } else if (data === 'cmd_notification_menu') {
-      // Sent from a notification — don't edit the notification, send a fresh menu
-      await bot.answerCallbackQuery(query.id).catch(() => {});
+      // Sent from a transfer notification — send a fresh menu instead of editing
+      await bot.answerCallbackQuery(cbQuery.id).catch(() => {});
       await bot.sendMessage(chatId, '*НАВИГАЦИЯ*', {
         parse_mode: 'Markdown',
         reply_markup: getMainMenuMarkup()
       });
-      return; // Skip the editMessageText call below
+      return;
+
     } else if (data === 'cmd_add_wallet') {
       userState[chatId] = { step: 'ADD_WALLET_NAME' };
-      textOut = '➕ *Добавление нового кошелька*\n\nОтправь название кошелька (например, `Alex5`):';
+      textOut   = '➕ *Добавление нового кошелька*\n\nОтправь название кошелька (например, `Alex5`):';
       markupOut = { inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cmd_main_menu' }]] };
+
     } else if (data === 'cmd_stats') {
       textOut = await getStatsText();
+
     } else if (data === 'cmd_collections') {
       const texts = await getCollectionsText();
       textOut = texts[0];
-      // Send remaining pages as new messages; add back button to the last one
+      // Send additional pages as new messages
       if (texts.length > 1) {
         for (let j = 1; j < texts.length; j++) {
           const isLast = j === texts.length - 1;
@@ -476,57 +632,64 @@ bot.on('callback_query', async (query) => {
             reply_markup: isLast ? getBackMarkup() : undefined,
           });
         }
-        // First message (editMessageText) needs no back button if more follow
-        markupOut = undefined;
+        markupOut = undefined; // first message needs no back button if more follow
       }
+
     } else if (data === 'cmd_moves') {
       textOut = await getMovesText();
+
     } else if (data === 'cmd_wallets_list') {
       textOut = await getWalletsListText();
+
     } else if (data === 'cmd_select_wallet') {
-      textOut = '👤 *Выбери кошелек:*';
+      textOut   = '👤 *Выбери кошелек:*';
       markupOut = await getWalletsMarkup();
+
     } else if (data.startsWith('cmd_wallet_')) {
       const index = parseInt(data.replace('cmd_wallet_', ''), 10);
-      textOut = await getWalletText(index);
+      textOut   = await getWalletText(index);
       markupOut = {
         inline_keyboard: [[{ text: '🔙 Назад к списку', callback_data: 'cmd_select_wallet' }]]
       };
+
+    } else if (data === 'cmd_table') {
+      textOut = await getTableText();
+
     } else if (data === 'cmd_status') {
       textOut = await getStatusText();
+
     } else if (data === 'cmd_refresh') {
-      await bot.answerCallbackQuery(query.id, { text: '⚙️ Запускаю парсинг, это займет некоторое время...' });
+      await bot.answerCallbackQuery(cbQuery.id, { text: '⚙️ Запускаю парсинг, это займёт некоторое время...' });
       textOut = await performRefresh();
+
     } else {
       textOut = 'Неизвестная команда';
     }
 
     await bot.editMessageText(textOut, {
-      chat_id: msg.chat.id,
+      chat_id:    msg.chat.id,
       message_id: msg.message_id,
       parse_mode: 'Markdown',
       reply_markup: markupOut
     }).catch((e) => {
-      if (!e.message.includes('message is not modified')) {
-        console.error('[Bot] Edit error:', e.message);
-        console.error('[Bot] Attempted text length:', textOut.length);
-        // Fallback for markdown errors
-        if (e.message.includes('can\'t parse entities')) {
-          bot.editMessageText('❌ Ошибка отображения данных (проблема с Markdown).', {
-            chat_id: msg.chat.id,
-            message_id: msg.message_id,
-            reply_markup: { inline_keyboard: [[{ text: '🔙 В меню', callback_data: 'cmd_main_menu' }]] }
-          }).catch(() => {});
-        }
+      if (e.message.includes('message is not modified')) return;
+      console.error('[Bot] Edit error:', e.message, '| text length:', textOut.length);
+      // Graceful fallback for Markdown parse errors
+      if (e.message.includes("can't parse entities")) {
+        bot.editMessageText('❌ Ошибка отображения данных (проблема с Markdown).', {
+          chat_id:    msg.chat.id,
+          message_id: msg.message_id,
+          reply_markup: { inline_keyboard: [[{ text: '🔙 В меню', callback_data: 'cmd_main_menu' }]] }
+        }).catch(() => {});
       }
     });
 
     if (data !== 'cmd_refresh') {
-      await bot.answerCallbackQuery(query.id).catch(() => {});
+      await bot.answerCallbackQuery(cbQuery.id).catch(() => {});
     }
   } catch (err) {
     console.error(`[Bot] Error handling callback "${data}":`, err.message);
-    await bot.answerCallbackQuery(query.id, { text: 'Ошибка: ' + err.message, show_alert: true }).catch(() => {});
+    await bot.answerCallbackQuery(cbQuery.id, { text: 'Ошибка: ' + err.message, show_alert: true }).catch(() => {});
   }
 });
 
@@ -534,24 +697,4 @@ bot.on('polling_error', (err) => {
   console.error('[Bot] Polling error:', err.message);
 });
 
-// =============================================================
-// Background sync is handled by dkt-parser (scheduler.js).
-// =============================================================
-let isParserRunning = false;
-
-async function performRefresh() {
-  if (isParserRunning) return '⚠️ Обновление уже запущено. Подождите...';
-  isParserRunning = true;
-  try {
-    await runParser(); 
-    return await getStatusText();
-  } catch (err) {
-    return `❌ Ошибка: ${err.message}`;
-  } finally {
-    isParserRunning = false;
-  }
-}
-
-console.log(`[Bot] DKT analytics bot started (presentation mode)`);
-
-
+console.log('[Bot] DKT analytics bot started');

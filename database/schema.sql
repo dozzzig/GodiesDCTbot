@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS current_inventory (
   sticker_name    TEXT,
   collection_name TEXT,
   collection_address TEXT,
+  floor_price     DECIMAL(18, 2) DEFAULT NULL,
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   PRIMARY KEY (wallet_address, nft_address)
@@ -60,3 +61,16 @@ CREATE TABLE IF NOT EXISTS parser_state (
   last_event_lt   BIGINT      NOT NULL DEFAULT 0,
   last_sync_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+-- Persistent metadata cache for NFTs that have left tracked wallets.
+-- Used by the transfer detector to resolve sticker/collection names
+-- for NFTs no longer present in current_inventory.
+-- FIX BUG 4: This table was referenced in parser.js but missing from schema.
+CREATE TABLE IF NOT EXISTS nft_metadata (
+  nft_address     TEXT PRIMARY KEY,
+  name            TEXT,
+  collection_name TEXT,
+  cached_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+

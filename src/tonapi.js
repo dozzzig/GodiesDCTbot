@@ -80,26 +80,46 @@ async function getNFTsByWallet(address) {
 }
 
 /**
- * Fetches account events (NFT transfers, etc.).
+ * Fetches account events (NFT transfers, etc.) newer than lastProcessedLt.
+ * Uses server-side before_lt filtering when available to avoid missing events
+ * if more than 100 transfers occur between parser runs.
  */
 async function getAccountEvents(address, lastProcessedLt = 0) {
   const friendly = toUserFriendly(address);
-  await sleep(TONAPI_REQUEST_DELAY_MS);
+  const allEvents = [];
+  let beforeLt = undefined;
 
-  const response = await withRetry(
-    () => httpClient.get(`/accounts/${friendly}/events`, {
-      params: {
-        limit: 100,
-        subject_only: true,
-      },
-    }),
-    `getAccountEvents(${friendly})`
-  );
+  // Paginate until we reach events we've already processed
+  while (true) {
+    await sleep(TONAPI_REQUEST_DELAY_MS);
 
-  const events = response.data?.events ?? [];
-  return lastProcessedLt > 0
-    ? events.filter((e) => Number(e.lt) > lastProcessedLt)
-    : events;
+    const params = { limit: 100, subject_only: true };
+    // TonAPI returns events in descending lt order; stop when we hit old ones
+    if (beforeLt !== undefined) params.before_lt = beforeLt;
+
+    const response = await withRetry(
+      () => httpClient.get(`/accounts/${friendly}/events`, { params }),
+      `getAccountEvents(${friendly})`
+    );
+
+    const events = response.data?.events ?? [];
+    if (events.length === 0) break;
+
+    // Filter only new events; stop paginating when we hit already-processed lt
+    const newEvents = lastProcessedLt > 0
+      ? events.filter((e) => Number(e.lt) > lastProcessedLt)
+      : events;
+
+    allEvents.push(...newEvents);
+
+    // If the page contained older events, no need to fetch more pages
+    if (newEvents.length < events.length || events.length < 100) break;
+
+    // Advance cursor: smallest lt on this page
+    beforeLt = Number(events[events.length - 1].lt);
+  }
+
+  return allEvents;
 }
 
 /**

@@ -2,14 +2,17 @@ const { Address } = require('@ton/core');
 
 /**
  * Normalizes any TON address format to a lowercase Raw Hex string (0:...).
+ * Returns null if the input cannot be parsed as a valid TON address,
+ * preventing invalid strings from being stored in the database.
  */
 function normalizeAddress(input) {
   if (!input) return null;
   try {
     const addr = Address.parse(input.trim());
     return addr.toRawString().toLowerCase();
-  } catch (err) {
-    return input.trim().toLowerCase(); 
+  } catch {
+    // Return null instead of the raw string — callers must handle null explicitly
+    return null;
   }
 }
 
@@ -19,7 +22,7 @@ function normalizeAddress(input) {
 function toUserFriendly(input) {
   if (!input) return null;
   if (input.startsWith('U') || input.startsWith('E')) return input.trim();
-  
+
   try {
     const addr = Address.parse(input.trim());
     return addr.toString({
@@ -27,8 +30,8 @@ function toUserFriendly(input) {
       testOnly: false,
       urlSafe: true
     });
-  } catch (err) {
-    return input.trim(); 
+  } catch {
+    return input.trim();
   }
 }
 
