@@ -365,15 +365,31 @@ async function getWalletsListText() {
     };
   }));
 
-  rows.sort((a, b) => a.index - b.index);
+  // Sort by count descending, then by value descending
+  rows.sort((a, b) => b.cnt - a.cnt || b.total_value - a.total_value);
 
-  let text = '📋 *Кошельки:*\n\n';
+  const NAME_W = 15;
+  const CNT_W  = 4;
+  const VAL_W  = 7;
+  const SEP    = '─'.repeat(3 + 3 + NAME_W + 3 + CNT_W + 3 + VAL_W);
+  const pad    = (s, w) => String(s).slice(0, w).padEnd(w);
+  const rpad   = (s, w) => String(s).slice(0, w).padStart(w);
+
+  let tbl = `🏆 Лидерборд кошельков\n`;
+  tbl += `${SEP}\n`;
+  tbl += ` № │ ${pad('Кошелёк (#)', NAME_W)} │ ${rpad('Шт', CNT_W)} │ ${rpad('TON', VAL_W)}\n`;
+  tbl += `${SEP}\n`;
+
+  let rank = 1;
   for (const row of rows) {
     const floorVal = parseFloat(row.total_value.toFixed(2));
-    const floorStr = floorVal > 0 ? ` — *${floorVal}* 💎` : '';
-    text += `*#${row.index}* ${row.name}: *${row.cnt}* шт.${floorStr}\n`;
+    const floorStr = floorVal > 0 ? floorVal.toFixed(2) : '-';
+    const nameStr = `${row.name} (#${row.index})`;
+    tbl += `${rpad(rank, 2)} │ ${pad(nameStr, NAME_W)} │ ${rpad(row.cnt, CNT_W)} │ ${rpad(floorStr, VAL_W)}\n`;
+    rank++;
   }
-  return text;
+
+  return `\`\`\`\n${tbl}\`\`\``;
 }
 
 /**
