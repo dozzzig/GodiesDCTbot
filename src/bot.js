@@ -121,33 +121,34 @@ async function getStatsText() {
     LIMIT 10
   `);
 
-  // Compact summary block
-  let text = `📊 *Статистика DKT*\n\n`;
-  text += `🃏 Стикеров всего: *${total}*\n`;
+  // Monospace table — same fixed-width style as the 📊 table command
+  const NAME_W = 20;
+  const CNT_W  = 5;
+  const SEP    = '─'.repeat(NAME_W + CNT_W + 4);
+  const pad    = (s, w) => String(s).slice(0, w).padEnd(w);
+  const rpad   = (s, w) => String(s).slice(0, w).padStart(w);
+
+  let tbl = `📊 Статистика DKT\n`;
+  tbl += `${SEP}\n`;
+  tbl += `${pad('Стикеров всего', NAME_W)} │ ${rpad(total, CNT_W)}\n`;
+  tbl += `${pad('Коллекций', NAME_W)} │ ${rpad(totalColls, CNT_W)}\n`;
   if (totalValue > 0) {
-    text += `💎 Стоимость: *${totalValue} TON*\n`;
+    tbl += `${pad('Стоимость (TON)', NAME_W)} │ ${rpad(totalValue, CNT_W)}\n`;
   }
-  text += `🗂 Коллекций: *${totalColls}*\n`;
-  text += `\n*Топ-${Math.min(10, collRes.rows.length)} коллекций:*\n`;
+  tbl += `${SEP}\n`;
+  tbl += `${pad('Коллекция', NAME_W)} │ ${rpad('Шт', CNT_W)}\n`;
+  tbl += `${SEP}\n`;
 
   for (const row of collRes.rows) {
-    const name = esc(row.collection_name ?? '(без коллекции)');
-    const cnt  = row.cnt;
-    if (row.floor_price) {
-      const sumPrice = parseFloat(parseFloat(row.coll_total_sum || 0).toFixed(2));
-      text += `• ${name} — *${cnt}* шт. \\| ${row.floor_price}💎 \\= ${sumPrice}💎\n`;
-    } else {
-      text += `• ${name} — *${cnt}* шт.\n`;
-    }
+    tbl += `${pad(row.collection_name ?? '(без назв.)', NAME_W)} │ ${rpad(row.cnt, CNT_W)}\n`;
   }
 
   if (totalColls > 10) {
-    text += `_...ещё ${totalColls - 10} — смотри 🏆 Коллекции_\n`;
+    tbl += `...ещё ${totalColls - 10}\n`;
   }
 
   const { lastSyncAt } = getSyncStatus();
-  text += `\n⏱ _Срез: ${fmt(lastSyncAt)}_`;
-  return text;
+  return `\`\`\`\n${tbl}\`\`\`\n⏱ _Срез: ${fmt(lastSyncAt)}_`;
 }
 
 /**
@@ -198,28 +199,33 @@ async function getWalletText(index) {
     ORDER BY cnt DESC
   `, [walletAddr]);
 
-  let text = `👤 *Кошелёк #${index} — ${wallet.name}*\n`;
-  text += `📍 \`${toUserFriendly(wallet.address)}\`\n`;
-  text += `📦 Стикеров: *${total}*\n`;
-  if (totalValue > 0) text += `💎 Сумма: *${totalValue} TON*\n`;
-  text += `\n`;
+  // Monospace table — same fixed-width style as the 📊 table command
+  const NAME_W = 20;
+  const CNT_W  = 5;
+  const SEP    = '─'.repeat(NAME_W + CNT_W + 4);
+  const pad    = (s, w) => String(s).slice(0, w).padEnd(w);
+  const rpad   = (s, w) => String(s).slice(0, w).padStart(w);
+
+  let tbl = `👤 #${index} — ${wallet.name}\n`;
+  tbl += `${SEP}\n`;
+  tbl += `${pad('Коллекция', NAME_W)} │ ${rpad('Шт', CNT_W)}\n`;
+  tbl += `${SEP}\n`;
 
   if (collRes.rows.length === 0) {
-    text += '_(пусто)_\n';
+    tbl += `(пусто)\n`;
   } else {
     for (const row of collRes.rows) {
-      const name = esc(row.collection_name ?? '(без коллекции)');
-      let floorStr = '';
-      if (row.floor_price) {
-        const sumPrice = parseFloat(parseFloat(row.coll_total_sum || 0).toFixed(2));
-        floorStr = ` \\| ${row.floor_price}💎 \\= ${sumPrice}💎`;
-      }
-      text += `• ${name} — *${row.cnt}* шт.${floorStr}\n`;
+      tbl += `${pad(row.collection_name ?? '(без назв.)', NAME_W)} │ ${rpad(row.cnt, CNT_W)}\n`;
     }
   }
 
+  tbl += `${SEP}\n`;
+  tbl += `${pad('ИТОГО', NAME_W)} │ ${rpad(total, CNT_W)}\n`;
+
   const { lastSyncAt } = getSyncStatus();
-  text += `\n⏱ _Срез: ${fmt(lastSyncAt)}_`;
+  let text = `\`\`\`\n${tbl}\`\`\`\n`;
+  if (totalValue > 0) text += `💎 *${totalValue} TON*\n`;
+  text += `⏱ _Срез: ${fmt(lastSyncAt)}_`;
   return text;
 }
 
@@ -299,29 +305,30 @@ async function getCollectionsText() {
     }))
     .sort((a, b) => b.total - a.total);
 
+  // Monospace table — same fixed-width style as the 📊 table command
+  const NAME_W = 20;
+  const CNT_W  = 5;
+  const SEP    = '─'.repeat(NAME_W + CNT_W + 4);
+  const pad    = (s, w) => String(s).slice(0, w).padEnd(w);
+  const rpad   = (s, w) => String(s).slice(0, w).padStart(w);
+
+  const firstHeader = `🏆 Коллекции${totalValueStr > 0 ? `  💎 ${totalValueStr} TON` : ''}\n${SEP}\n${pad('Коллекция', NAME_W)} │ ${rpad('Шт', CNT_W)}\n${SEP}\n`;
+
   const messages = [];
-  let currentText = '🏆 *Разбивка по коллекциям:*\n';
-  currentText += `💎 сумма стикеров — *${totalValueStr}* TON\n\n`;
-  let i = 1;
+  let currentBlock = firstHeader;
 
   for (const col of sorted) {
-    const walletInfo = col.wallets.map((w) => `${esc(w.wallet)}:${w.cnt}`).join(', ');
-    let floorStr = '';
-    if (col.floor_price) {
-      const sumPrice = parseFloat((col.total * parseFloat(col.floor_price)).toFixed(2));
-      floorStr = ` \\| ${col.floor_price}💎 \\= ${sumPrice}💎`;
-    }
-    const line = `${i}\\. *${esc(col.name)}* — ${col.total} шт.${floorStr} _(${walletInfo})_\n`;
+    const walletInfo = col.wallets.map((w) => `${w.wallet}:${w.cnt}`).join('  ');
+    const line = `${pad(col.name, NAME_W)} │ ${rpad(col.total, CNT_W)}\n  ${walletInfo}\n`;
 
-    if (currentText.length + line.length > 3900) {
-      messages.push(currentText.trim());
-      currentText = '';
+    if (currentBlock.length + line.length > 3000) {
+      messages.push(`\`\`\`\n${currentBlock}\`\`\``);
+      currentBlock = '';
     }
-    currentText += line;
-    i++;
+    currentBlock += line;
   }
 
-  if (currentText) messages.push(currentText.trim());
+  if (currentBlock) messages.push(`\`\`\`\n${currentBlock}\`\`\``);
   return messages;
 }
 
