@@ -92,10 +92,16 @@ async function syncInventory(wallet, walletAddress, floorPriceCache) {
   }
 
   const now = new Date().toISOString();
-  const currentNftAddresses = nftItems.map((item) => normalizeAddress(item.address));
+  // Filter nulls: a single null in NOT IN (...) makes the entire SQL condition
+  // UNKNOWN, which prevents ANY deletions — stale stickers would never be removed.
+  const currentNftAddresses = nftItems
+    .map((item) => normalizeAddress(item.address))
+    .filter(Boolean);
 
   for (const item of nftItems) {
     const nftAddress = normalizeAddress(item.address);
+    // Skip items whose address couldn't be parsed — avoids inserting garbage rows
+    if (!nftAddress) continue;
     const stickerName = item.metadata?.name ?? null;
     const collectionName = item.collection?.name ?? null;
     const collectionAddress = normalizeAddress(item.collection?.address) ?? null;
